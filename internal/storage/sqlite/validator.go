@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/iweka-dev/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/domain"
 )
 
 func isUniqueConstraint(err error) bool {

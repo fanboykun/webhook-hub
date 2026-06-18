@@ -3,7 +3,7 @@ package sqlite
 import (
 	"encoding/json"
 
-	"github.com/iweka-dev/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/domain"
 )
 
 func toReceiptModel(in domain.Receipt) receiptModel {

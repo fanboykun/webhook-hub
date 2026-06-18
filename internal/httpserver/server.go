@@ -9,9 +9,9 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humagin"
+	"github.com/fanboykun/webhook-hub/internal/app"
+	"github.com/fanboykun/webhook-hub/internal/config"
 	"github.com/gin-gonic/gin"
-	"github.com/iweka-dev/webhook-hub/internal/app"
-	"github.com/iweka-dev/webhook-hub/internal/config"
 )
 
 type Server struct {

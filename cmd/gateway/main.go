@@ -7,17 +7,17 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/iweka-dev/webhook-hub/internal/app"
-	"github.com/iweka-dev/webhook-hub/internal/clock"
-	"github.com/iweka-dev/webhook-hub/internal/config"
-	"github.com/iweka-dev/webhook-hub/internal/delivery"
-	"github.com/iweka-dev/webhook-hub/internal/httpserver"
-	"github.com/iweka-dev/webhook-hub/internal/ingress"
-	ghingress "github.com/iweka-dev/webhook-hub/internal/ingress/github"
-	"github.com/iweka-dev/webhook-hub/internal/ingress/watcher"
-	"github.com/iweka-dev/webhook-hub/internal/observability"
-	"github.com/iweka-dev/webhook-hub/internal/routing"
-	"github.com/iweka-dev/webhook-hub/internal/storage/sqlite"
+	"github.com/fanboykun/webhook-hub/internal/app"
+	"github.com/fanboykun/webhook-hub/internal/clock"
+	"github.com/fanboykun/webhook-hub/internal/config"
+	"github.com/fanboykun/webhook-hub/internal/delivery"
+	"github.com/fanboykun/webhook-hub/internal/httpserver"
+	"github.com/fanboykun/webhook-hub/internal/ingress"
+	ghingress "github.com/fanboykun/webhook-hub/internal/ingress/github"
+	"github.com/fanboykun/webhook-hub/internal/ingress/watcher"
+	"github.com/fanboykun/webhook-hub/internal/observability"
+	"github.com/fanboykun/webhook-hub/internal/routing"
+	"github.com/fanboykun/webhook-hub/internal/storage/sqlite"
 )
 
 func main() {

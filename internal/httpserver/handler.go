@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/iweka-dev/webhook-hub/internal/app"
-	"github.com/iweka-dev/webhook-hub/internal/domain"
-	"github.com/iweka-dev/webhook-hub/internal/ingress"
+	"github.com/fanboykun/webhook-hub/internal/app"
+	"github.com/fanboykun/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/ingress"
 )
 
 type Handler struct {

@@ -3,7 +3,7 @@ package routing
 import (
 	"testing"
 
-	"github.com/iweka-dev/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/domain"
 )
 
 func TestEngineDestinationsDedupes(t *testing.T) {

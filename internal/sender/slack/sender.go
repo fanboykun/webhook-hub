@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iweka-dev/webhook-hub/internal/config"
-	"github.com/iweka-dev/webhook-hub/internal/domain"
-	"github.com/iweka-dev/webhook-hub/internal/sender"
+	"github.com/fanboykun/webhook-hub/internal/config"
+	"github.com/fanboykun/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/sender"
 )
 
 type Sender struct {
@@ -33,7 +33,7 @@ func (e *Error) Error() string {
 
 func New(destinations map[string]config.DestinationConfig) *Sender {
 	return &Sender{
-		client: &http.Client{Timeout: 10 * time.Second},
+		client:       &http.Client{Timeout: 10 * time.Second},
 		destinations: destinations,
 	}
 }

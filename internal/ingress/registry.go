@@ -1,6 +1,6 @@
 package ingress
 
-import "github.com/iweka-dev/webhook-hub/internal/domain"
+import "github.com/fanboykun/webhook-hub/internal/domain"
 
 type Registry struct {
 	adapters map[domain.Source]SourceAdapter

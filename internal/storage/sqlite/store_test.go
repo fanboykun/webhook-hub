@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iweka-dev/webhook-hub/internal/config"
-	"github.com/iweka-dev/webhook-hub/internal/domain"
-	"github.com/iweka-dev/webhook-hub/internal/observability"
+	"github.com/fanboykun/webhook-hub/internal/config"
+	"github.com/fanboykun/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/observability"
 )
 
 func TestIngestDuplicateReceipt(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/iweka-dev/webhook-hub/internal/config"
+	"github.com/fanboykun/webhook-hub/internal/config"
 )
 
 func NextAttempt(now time.Time, attempt int, retry config.RetryConfig) time.Time {

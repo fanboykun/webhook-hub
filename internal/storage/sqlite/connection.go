@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/fanboykun/webhook-hub/internal/config"
 	sqlite_adapter "github.com/glebarez/sqlite"
-	"github.com/iweka-dev/webhook-hub/internal/config"
 	"gorm.io/gorm"
 
 	glogger "gorm.io/gorm/logger"

@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/iweka-dev/webhook-hub/internal/config"
+	"github.com/fanboykun/webhook-hub/internal/config"
 )
 
 type loggerKey struct{}

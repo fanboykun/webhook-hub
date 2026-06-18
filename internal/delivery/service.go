@@ -5,15 +5,15 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/iweka-dev/webhook-hub/internal/clock"
-	"github.com/iweka-dev/webhook-hub/internal/config"
-	"github.com/iweka-dev/webhook-hub/internal/domain"
-	slackrender "github.com/iweka-dev/webhook-hub/internal/message/slack"
-	telegramrender "github.com/iweka-dev/webhook-hub/internal/message/telegram"
-	sendpkg "github.com/iweka-dev/webhook-hub/internal/sender"
-	slacksender "github.com/iweka-dev/webhook-hub/internal/sender/slack"
-	telegramsender "github.com/iweka-dev/webhook-hub/internal/sender/telegram"
-	"github.com/iweka-dev/webhook-hub/internal/storage"
+	"github.com/fanboykun/webhook-hub/internal/clock"
+	"github.com/fanboykun/webhook-hub/internal/config"
+	"github.com/fanboykun/webhook-hub/internal/domain"
+	slackrender "github.com/fanboykun/webhook-hub/internal/message/slack"
+	telegramrender "github.com/fanboykun/webhook-hub/internal/message/telegram"
+	sendpkg "github.com/fanboykun/webhook-hub/internal/sender"
+	slacksender "github.com/fanboykun/webhook-hub/internal/sender/slack"
+	telegramsender "github.com/fanboykun/webhook-hub/internal/sender/telegram"
+	"github.com/fanboykun/webhook-hub/internal/storage"
 )
 
 type Service struct {

@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iweka-dev/webhook-hub/internal/clock"
-	"github.com/iweka-dev/webhook-hub/internal/config"
-	"github.com/iweka-dev/webhook-hub/internal/domain"
-	"github.com/iweka-dev/webhook-hub/internal/routing"
+	"github.com/fanboykun/webhook-hub/internal/clock"
+	"github.com/fanboykun/webhook-hub/internal/config"
+	"github.com/fanboykun/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/routing"
 )
 
 func TestCreateRouteNormalizesBlankSelectorValues(t *testing.T) {

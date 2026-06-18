@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iweka-dev/webhook-hub/internal/clock"
-	"github.com/iweka-dev/webhook-hub/internal/config"
-	"github.com/iweka-dev/webhook-hub/internal/domain"
-	"github.com/iweka-dev/webhook-hub/internal/observability"
-	"github.com/iweka-dev/webhook-hub/internal/storage/sqlite"
+	"github.com/fanboykun/webhook-hub/internal/clock"
+	"github.com/fanboykun/webhook-hub/internal/config"
+	"github.com/fanboykun/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/observability"
+	"github.com/fanboykun/webhook-hub/internal/storage/sqlite"
 )
 
 func TestProcessOnceSent(t *testing.T) {

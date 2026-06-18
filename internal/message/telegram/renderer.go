@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/iweka-dev/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/domain"
 )
 
 type Renderer struct{}

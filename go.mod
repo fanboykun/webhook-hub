@@ -1,4 +1,4 @@
-module github.com/iweka-dev/webhook-hub
+module github.com/fanboykun/webhook-hub
 
 go 1.25.6
 

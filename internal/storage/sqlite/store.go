@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/iweka-dev/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/domain"
 	"gorm.io/gorm"
 )
 

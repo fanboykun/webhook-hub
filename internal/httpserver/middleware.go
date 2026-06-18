@@ -4,8 +4,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/fanboykun/webhook-hub/internal/id"
 	"github.com/gin-gonic/gin"
-	"github.com/iweka-dev/webhook-hub/internal/id"
 )
 
 func requestLoggingMiddleware(logger *slog.Logger) gin.HandlerFunc {

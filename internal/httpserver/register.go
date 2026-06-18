@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/iweka-dev/webhook-hub/internal/config"
+	"github.com/fanboykun/webhook-hub/internal/config"
 )
 
 func registerRoutes(api huma.API, cfg config.Config, handler *Handler) {

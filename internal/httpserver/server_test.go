@@ -16,16 +16,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iweka-dev/webhook-hub/internal/app"
-	"github.com/iweka-dev/webhook-hub/internal/clock"
-	"github.com/iweka-dev/webhook-hub/internal/config"
-	"github.com/iweka-dev/webhook-hub/internal/domain"
-	"github.com/iweka-dev/webhook-hub/internal/ingress"
-	ghingress "github.com/iweka-dev/webhook-hub/internal/ingress/github"
-	"github.com/iweka-dev/webhook-hub/internal/ingress/watcher"
-	"github.com/iweka-dev/webhook-hub/internal/observability"
-	"github.com/iweka-dev/webhook-hub/internal/routing"
-	"github.com/iweka-dev/webhook-hub/internal/storage/sqlite"
+	"github.com/fanboykun/webhook-hub/internal/app"
+	"github.com/fanboykun/webhook-hub/internal/clock"
+	"github.com/fanboykun/webhook-hub/internal/config"
+	"github.com/fanboykun/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/ingress"
+	ghingress "github.com/fanboykun/webhook-hub/internal/ingress/github"
+	"github.com/fanboykun/webhook-hub/internal/ingress/watcher"
+	"github.com/fanboykun/webhook-hub/internal/observability"
+	"github.com/fanboykun/webhook-hub/internal/routing"
+	"github.com/fanboykun/webhook-hub/internal/storage/sqlite"
 )
 
 func TestWatcherWebhookAccepted(t *testing.T) {
@@ -148,7 +148,7 @@ func TestGitHubWebhookAccepted(t *testing.T) {
 		"action": "published",
 		"repository": map[string]any{
 			"full_name": "iweka-dev/webhook-hub",
-			"html_url":  "https://github.com/iweka-dev/webhook-hub",
+			"html_url":  "https://github.com/fanboykun/webhook-hub",
 		},
 		"sender": map[string]any{
 			"login": "joyy",
@@ -156,7 +156,7 @@ func TestGitHubWebhookAccepted(t *testing.T) {
 		"release": map[string]any{
 			"tag_name": "v1.0.0",
 			"name":     "v1.0.0",
-			"html_url": "https://github.com/iweka-dev/webhook-hub/releases/tag/v1.0.0",
+			"html_url": "https://github.com/fanboykun/webhook-hub/releases/tag/v1.0.0",
 		},
 	})
 

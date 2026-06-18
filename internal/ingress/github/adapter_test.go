@@ -9,15 +9,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iweka-dev/webhook-hub/internal/config"
-	"github.com/iweka-dev/webhook-hub/internal/domain"
-	"github.com/iweka-dev/webhook-hub/internal/ingress"
+	"github.com/fanboykun/webhook-hub/internal/config"
+	"github.com/fanboykun/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/ingress"
 )
 
 func TestVerifyAndNormalizeRelease(t *testing.T) {
 	adapter := NewAdapter()
 	now := time.Now().UTC()
-	body := []byte(`{"action":"published","repository":{"full_name":"iweka-dev/webhook-hub","html_url":"https://github.com/iweka-dev/webhook-hub"},"sender":{"login":"joyy"},"release":{"tag_name":"v1.0.0","name":"v1.0.0","html_url":"https://github.com/iweka-dev/webhook-hub/releases/tag/v1.0.0"}}`)
+	body := []byte(`{"action":"published","repository":{"full_name":"iweka-dev/webhook-hub","html_url":"https://github.com/fanboykun/webhook-hub"},"sender":{"login":"joyy"},"release":{"tag_name":"v1.0.0","name":"v1.0.0","html_url":"https://github.com/fanboykun/webhook-hub/releases/tag/v1.0.0"}}`)
 
 	mac := hmac.New(sha256.New, []byte("secret"))
 	mac.Write(body)

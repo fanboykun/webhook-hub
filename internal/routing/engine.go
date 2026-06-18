@@ -4,7 +4,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/iweka-dev/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/domain"
 )
 
 type Engine struct {
