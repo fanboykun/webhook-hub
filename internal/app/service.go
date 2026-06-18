@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/iweka-dev/webhook-hub/internal/clock"
@@ -178,16 +180,113 @@ func (s *Service) DeleteRoute(ctx context.Context, authorization, routeID string
 }
 
 func (s *Service) validateRoute(route domain.Route) error {
-	if route.ID == "" {
+	if strings.TrimSpace(route.ID) == "" {
 		return errors.New("route id is required")
 	}
 	if len(route.Destinations) == 0 {
 		return errors.New("route destinations must not be empty")
 	}
+	seenDestinations := make(map[string]struct{}, len(route.Destinations))
 	for _, destinationID := range route.Destinations {
+		destinationID = strings.TrimSpace(destinationID)
+		if destinationID == "" {
+			return errors.New("route destinations must not contain blank values")
+		}
+		if _, exists := seenDestinations[destinationID]; exists {
+			return fmt.Errorf("route destinations must be unique: %s", destinationID)
+		}
+		seenDestinations[destinationID] = struct{}{}
 		if _, exists := s.cfg.Destinations[destinationID]; !exists {
 			return errors.New("route references unknown destination " + destinationID)
 		}
+	}
+	if err := validateRouteMatch(route.Match); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateRouteMatch(match domain.RouteMatchCriteria) error {
+	if err := validateRouteSources(match.Sources); err != nil {
+		return err
+	}
+	if err := validateRouteEventTypes(match.Types); err != nil {
+		return err
+	}
+	if err := validateRouteSeverities(match.Severities); err != nil {
+		return err
+	}
+	if err := validateRouteEnvironments(match.Environments); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateRouteSources(values []domain.Source) error {
+	seen := map[domain.Source]struct{}{}
+	for _, value := range values {
+		value = domain.Source(strings.TrimSpace(string(value)))
+		if value == "" {
+			return errors.New("route sources must not contain blank values")
+		}
+		if !domain.IsKnownSource(value) {
+			return fmt.Errorf("route sources contains unknown value %q", value)
+		}
+		if _, exists := seen[value]; exists {
+			return fmt.Errorf("route sources must be unique: %s", value)
+		}
+		seen[value] = struct{}{}
+	}
+	return nil
+}
+
+func validateRouteEventTypes(values []string) error {
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return errors.New("route types must not contain blank values")
+		}
+		if !domain.IsKnownEventType(value) {
+			return fmt.Errorf("route types contains unknown value %q", value)
+		}
+		if _, exists := seen[value]; exists {
+			return fmt.Errorf("route types must be unique: %s", value)
+		}
+		seen[value] = struct{}{}
+	}
+	return nil
+}
+
+func validateRouteSeverities(values []domain.Severity) error {
+	seen := map[domain.Severity]struct{}{}
+	for _, value := range values {
+		value = domain.Severity(strings.TrimSpace(string(value)))
+		if value == "" {
+			return errors.New("route severities must not contain blank values")
+		}
+		if !domain.IsKnownSeverity(value) {
+			return fmt.Errorf("route severities contains unknown value %q", value)
+		}
+		if _, exists := seen[value]; exists {
+			return fmt.Errorf("route severities must be unique: %s", value)
+		}
+		seen[value] = struct{}{}
+	}
+	return nil
+}
+
+func validateRouteEnvironments(values []string) error {
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return errors.New("route environments must not contain blank values")
+		}
+		if _, exists := seen[value]; exists {
+			return fmt.Errorf("route environments must be unique: %s", value)
+		}
+		seen[value] = struct{}{}
 	}
 	return nil
 }

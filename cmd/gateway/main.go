@@ -56,7 +56,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	server := httpserver.New(cfg, appService)
+	server := httpserver.New(cfg, appService, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

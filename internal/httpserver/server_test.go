@@ -537,7 +537,7 @@ func newTestServer(t *testing.T, cfg config.Config, store *sqlite.Store, routes 
 	if routes != nil {
 		engine.Replace(routes)
 	}
-	return New(cfg, appService)
+	return New(cfg, appService, observability.NewLogger(cfg.Logging))
 }
 
 func deliverySeedBatch(now time.Time) domain.IngestBatch {

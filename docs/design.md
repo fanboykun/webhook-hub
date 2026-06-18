@@ -873,6 +873,7 @@ Matching semantics:
 - Different match fields use logical AND.
 - Multiple values within one field use logical OR.
 - Empty match fields mean unrestricted.
+- Selector arrays must not contain blank strings; omit a field instead of sending `[""]` when you want a wildcard.
 - Label matches require exact values in version 1.
 - Route order affects audit presentation, not delivery semantics.
 
@@ -1516,6 +1517,8 @@ remote_ip
 user_agent
 ```
 
+Every inbound HTTP request should emit one `http.request` access log after the request finishes, even if a later middleware or handler rejects it. Webhook ingestion should emit a second outcome log such as `webhook.accepted`, `webhook.ignored`, `webhook.unrouted`, or `webhook.duplicate` so operators can distinguish transport acceptance from delivery fan-out.
+
 The ingestion service adds:
 
 ```text
@@ -1540,6 +1543,7 @@ worker_id
 Recommended stable messages:
 
 ```text
+http.request
 webhook.received
 webhook.rejected
 webhook.duplicate

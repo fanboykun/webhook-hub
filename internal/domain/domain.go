@@ -259,6 +259,15 @@ func KnownSourceStrings() []string {
 	return values
 }
 
+func IsKnownSource(value Source) bool {
+	for _, known := range KnownSources {
+		if known == value {
+			return true
+		}
+	}
+	return false
+}
+
 func KnownSeverityStrings() []string {
 	values := make([]string, 0, len(KnownSeverities))
 	for _, value := range KnownSeverities {
@@ -267,6 +276,28 @@ func KnownSeverityStrings() []string {
 	return values
 }
 
+func IsKnownSeverity(value Severity) bool {
+	for _, known := range KnownSeverities {
+		if known == value {
+			return true
+		}
+	}
+	return false
+}
+
 func KnownEventTypeStrings() []string {
-	return append([]string(nil), KnownEventTypes...)
+	values := make([]string, 0, len(KnownEventTypes))
+	for _, value := range KnownEventTypes {
+		values = append(values, value)
+	}
+	return values
+}
+
+func IsKnownEventType(value string) bool {
+	for _, known := range KnownEventTypes {
+		if known == value {
+			return true
+		}
+	}
+	return false
 }

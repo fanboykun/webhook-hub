@@ -36,16 +36,21 @@ When delivering an event, Watcher sends an HTTP request with the following detai
 - **Method**: `POST`
 - **Content-Type**: `application/json`
 - **Headers**:
+  - `webhook-id`: Stable event identifier used for idempotency across retries.
+  - `webhook-timestamp`: Unix timestamp in seconds for the delivery attempt.
+  - `webhook-signature`: Standard Webhooks HMAC-SHA256 signature over `webhook-id.webhook-timestamp.raw_body`.
   - `X-Watcher-Event`: The type of event being delivered (e.g. `watcher.deployment_succeeded`).
   - `X-Watcher-Delivery-ID`: A unique string identifying this specific delivery attempt (e.g. `dlv_01j0deployok_1`).
-  - `Authorization`: `Bearer <token>` (only included if a Bearer Token is configured for the watcher or globally).
 
 ### 2.1 Shared Envelope Contract
 
-Every webhook event includes the same top-level envelope before any event-specific nested object such as `version`, `attempt`, `service`, or `health`.
+Every webhook event includes the same top-level envelope before any event-specific nested object such as `version`, `attempt`, `service`, or `health`. Watcher now includes both the Standard Webhooks fields and its legacy convenience fields for easier migration.
 
 | Field | Type | Meaning |
 | :--- | :--- | :--- |
+| `type` | `string` | Standard Webhooks event type. This matches `event_type`. |
+| `timestamp` | `string` (`RFC3339 date-time`) | Standard Webhooks event timestamp. This matches `occurred_at`. |
+| `data` | `object` | Standard Webhooks event data envelope. Includes `event_id`, `watcher`, `summary`, and the event-specific nested object. |
 | `schema_version` | `string` | Version of the webhook payload contract. For the current public contract this is `v1`. |
 | `event_id` | `string` | Stable identifier for the business event itself. Use this for idempotency and deduplication across retries or replays. |
 | `event_type` | `string` | Event name such as `watcher.version_found`. This matches the `X-Watcher-Event` header and tells you which nested object to expect. |
@@ -76,7 +81,7 @@ Receiver guidance for this event:
 
 ## 3. Webhook Receiver Examples
 
-To integrate with Watcher, write an HTTP server endpoint that checks the `Authorization` header, logs/processes the payload asynchronously, and returns a `200 OK` or `202 Accepted` immediately.
+To integrate with Watcher, write an HTTP server endpoint that verifies the Standard Webhooks signature, logs/processes the payload asynchronously, and returns a `200 OK` or `202 Accepted` immediately.
 
 ### Go Example (Using Standard Library)
 
@@ -84,14 +89,15 @@ To integrate with Watcher, write an HTTP server endpoint that checks the `Author
 package main
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"log"
 	"net/http"
+
+	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
 )
 
-const expectedToken = "your-configured-bearer-token"
+const signingSecret = "whsec_your_configured_secret"
 
 func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	// 1. Verify Request Method
@@ -100,20 +106,7 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Authenticate using Bearer Token
-	authHeader := r.Header.Get("Authorization")
-	expectedAuth := "Bearer " + expectedToken
-	// Use ConstantTimeCompare to prevent timing attacks
-	if subtle.ConstantTimeCompare([]byte(authHeader), []byte(expectedAuth)) != 1 {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// 3. Extract Watcher Custom Headers
-	eventType := r.Header.Get("X-Watcher-Event")
-	deliveryID := r.Header.Get("X-Watcher-Delivery-ID")
-
-	// 4. Read Body
+	// 2. Read the exact request body bytes
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read body", http.StatusBadRequest)
@@ -121,10 +114,26 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
+	// 3. Verify Standard Webhooks signature headers
+	wh, err := standardwebhooks.NewWebhook(signingSecret)
+	if err != nil {
+		http.Error(w, "Invalid receiver secret", http.StatusInternalServerError)
+		return
+	}
+	if err := wh.Verify(body, r.Header); err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// 4. Extract Watcher metadata headers
+	eventType := r.Header.Get("X-Watcher-Event")
+	deliveryID := r.Header.Get("X-Watcher-Delivery-ID")
+
 	// 5. Parse JSON Payload Envelope
 	var envelope struct {
+		Type      string `json:"type"`
+		Timestamp string `json:"timestamp"`
 		EventID   string `json:"event_id"`
-		EventType string `json:"event_type"`
 		Summary   string `json:"summary"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
@@ -133,8 +142,8 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 6. Log metadata and handoff to a background queue
-	log.Printf("Received Webhook: ID=%s EventType=%s (%s) DeliveryID=%s", 
-		envelope.EventID, eventType, envelope.Summary, deliveryID)
+	log.Printf("Received Webhook: ID=%s Type=%s (%s) DeliveryID=%s",
+		envelope.EventID, envelope.Type, envelope.Summary, deliveryID)
 
 	// TODO: Store eventID in database to deduplicate future deliveries
 	// Go routine or message queue handoff here to process actual payload...
@@ -157,13 +166,22 @@ func main() {
 
 ```typescript
 import express, { Request, Response } from 'express';
+import crypto from 'crypto';
 
 const app = express();
-app.use(express.json());
+app.use(express.json({
+  verify: (req, _res, buf) => {
+    (req as Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+  }
+}));
 
-const EXPECTED_TOKEN = 'your-configured-bearer-token';
+const SIGNING_SECRET = 'whsec_your_configured_secret';
+
+type RawBodyRequest = Request & { rawBody?: Buffer };
 
 interface WebhookEnvelope {
+  type: string;
+  timestamp: string;
   schema_version: string;
   event_id: string;
   event_type: string;
@@ -175,24 +193,47 @@ interface WebhookEnvelope {
   summary: string;
 }
 
-app.post('/watcher-webhooks', (req: Request, res: Response): any => {
-  const authHeader = req.headers.authorization;
+function verifyStandardWebhookSignature(req: RawBodyRequest, secret: string): boolean {
+  const msgId = req.header('webhook-id');
+  const msgTimestamp = req.header('webhook-timestamp');
+  const msgSignature = req.header('webhook-signature');
+  const rawBody = req.rawBody;
+
+  if (!msgId || !msgTimestamp || !msgSignature || !rawBody) {
+    return false;
+  }
+
+  const unsignedSecret = secret.replace(/^whsec_/, '');
+  const key = Buffer.from(unsignedSecret, 'base64');
+  const signedContent = `${msgId}.${msgTimestamp}.${rawBody.toString('utf8')}`;
+  const expected = crypto.createHmac('sha256', key).update(signedContent).digest('base64');
+
+  return msgSignature
+    .split(' ')
+    .some((entry) => {
+      const [version, signature] = entry.split(',');
+      if (version !== 'v1' || !signature) return false;
+      return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+    });
+}
+
+app.post('/watcher-webhooks', (req: RawBodyRequest, res: Response): any => {
   const eventType = req.headers['x-watcher-event'];
   const deliveryId = req.headers['x-watcher-delivery-id'];
 
-  // 1. Authenticate Token
-  if (!authHeader || authHeader !== `Bearer ${EXPECTED_TOKEN}`) {
+  // 1. Verify Standard Webhooks signature with the raw body.
+  if (!verifyStandardWebhookSignature(req, SIGNING_SECRET)) {
     return res.status(401).send('Unauthorized');
   }
 
   const payload = req.body as WebhookEnvelope;
 
   // 2. Validate basic structure
-  if (!payload.event_id || !payload.event_type) {
-    return res.status(400).send('Bad Request: Missing event_id or event_type');
+  if (!payload.event_id || !payload.type) {
+    return res.status(400).send('Bad Request: Missing event_id or type');
   }
 
-  console.log(`Processing event ${payload.event_id} of type ${eventType}. Attempt delivery: ${deliveryId}`);
+  console.log(`Processing event ${payload.event_id} of type ${payload.type}. Attempt delivery: ${deliveryId}`);
   console.log(`Summary: ${payload.summary}`);
 
   // TODO: Check if event_id has been processed recently (deduplication)
@@ -206,6 +247,121 @@ app.listen(8090, () => {
   console.log('Webhook server listening on port 8090');
 });
 ```
+
+---
+
+### 3.1 Zero-to-Ship Setup Checklist
+
+Use this checklist when wiring a new receiver from scratch:
+
+1. **Choose the receiver endpoint**
+   - Expose a `POST` endpoint reachable by the Watcher host.
+   - Make sure your reverse proxy, firewall, and TLS settings allow Watcher to reach it.
+
+2. **Generate a signing secret**
+   - Generate a random Standard Webhooks HMAC secret in the `whsec_...` format.
+   - Use one secret per logical endpoint or consumer whenever practical.
+   - Store it in your receiver secret store first, then copy the same value into Watcher.
+
+3. **Implement raw-body verification**
+   - Read the exact request body bytes before re-serializing JSON.
+   - Verify `webhook-id`, `webhook-timestamp`, and `webhook-signature` using the shared secret.
+   - Reject requests with invalid signatures or timestamps outside your acceptable replay window.
+
+4. **Add idempotency protection**
+   - Deduplicate on `event_id`.
+   - Treat `X-Watcher-Delivery-ID` as the transport-attempt identifier only.
+   - Store recent processed event IDs in a durable store such as Redis or your primary database.
+
+5. **Configure Watcher**
+   - Set a global default webhook URL and signing secret, or configure watcher-specific overrides.
+   - Enable webhook delivery explicitly on the watcher.
+   - Select the event types you want emitted.
+
+6. **Send a test webhook**
+   - Use the Watcher UI action to queue `watcher.webhook_test`.
+   - Confirm the receiver accepted the request and verified the signature.
+   - Confirm Watcher delivery history shows the attempt as `succeeded`.
+
+7. **Exercise failure handling before production**
+   - Intentionally return a `401`, `400`, and `500` once each.
+   - Verify Watcher treats them as expected:
+     - `400` and `401` are terminal failures
+     - `500` is retryable
+     - repeated failures can auto-pause the watcher webhook
+
+8. **Go live**
+   - Turn on the real business events you want.
+   - Monitor delivery history, exhausted events, and your receiver logs during the first rollout window.
+
+### 3.2 Secret Management Guidance
+
+Treat the signing secret like any other production credential:
+
+- Generate high-entropy secrets only. Do not hand-write short or guessable values.
+- Prefer one secret per endpoint, environment, or tenant boundary instead of reusing one secret everywhere.
+- Store secrets in your normal secret-management system, not in source control.
+- Never expose secrets in logs, screenshots, support messages, or dashboard payload views.
+- When rotating a secret:
+  1. add the new secret to the receiver
+  2. update Watcher to send with the new secret
+  3. verify delivery success
+  4. remove the old secret from the receiver
+
+**Current Watcher limitation:** this implementation signs with one active HMAC secret at a time and does not yet emit multiple concurrent signatures for zero-downtime secret rotation. Plan rotation carefully and validate with `watcher.webhook_test` immediately after changing the secret.
+
+### 3.3 Receiver Implementation Notes
+
+- **Verify before trusting payload contents.** Do not parse the request into domain actions before signature verification passes.
+- **Use the raw request body.** Parsing JSON and serializing it again can change whitespace or field ordering and break verification.
+- **Keep request handling fast.** Accept, verify, enqueue work internally, and return `2xx`. Do not block the webhook response on slow downstream business logic.
+- **Log stable fields.** At minimum log `event_id`, `type`, `X-Watcher-Delivery-ID`, and the HTTP status you returned.
+- **Enforce timestamp tolerance.** Standard Webhooks verification should reject requests too far in the past or future to reduce replay risk.
+
+### 3.4 Migration Notes For Existing Watcher Consumers
+
+If you already integrated with Watcher’s earlier bearer-token-oriented webhook contract, the migration path is:
+
+1. Remove the old expectation that Watcher authenticates with `Authorization: Bearer ...`.
+2. Add Standard Webhooks verification using the shared `whsec_...` secret.
+3. Keep reading the existing Watcher event fields if you already depend on them.
+4. Prefer the new standard top-level fields for new integrations:
+   - `type`
+   - `timestamp`
+   - `data`
+5. Continue deduplicating on `event_id`; that behavior did not change.
+
+Watcher currently keeps both the Standard Webhooks envelope fields and the legacy Watcher convenience fields in the payload for compatibility during migration. New receivers should prefer the standard shape first and use the legacy fields only when they add clarity or ease transition.
+
+### 3.5 Production Readiness Checklist
+
+Before treating the integration as shipped, confirm all of the following:
+
+- The receiver verifies signatures against the raw request body.
+- The receiver enforces idempotency on `event_id`.
+- The receiver tolerates out-of-order transport retries only by dedupe, not by assuming exactly-once delivery.
+- The receiver returns `2xx` only after it has durably accepted the event for its own internal processing.
+- The receiver logs enough metadata to investigate replay, retry, and exhausted delivery incidents.
+- Your team knows how to resume paused webhooks and when to replay suppressed events.
+- Your team knows which event types are enabled and which downstream automations depend on them.
+- Secret rotation has been rehearsed in a non-production environment.
+
+### 3.6 Common Ship-Time Failure Modes
+
+- **Signature verifies locally but fails in production**
+  - Usually caused by verifying a parsed JSON body instead of the raw bytes, or by a proxy/body parser consuming the raw stream incorrectly.
+
+- **All requests fail with `401`**
+  - Usually the receiver and Watcher do not share the same `whsec_...` secret, or the receiver’s clock tolerance is too strict.
+
+- **Retries keep happening for the same business event**
+  - The receiver may be doing real work before responding and timing out, or it may be returning `5xx` after partial processing.
+
+- **Duplicate downstream work**
+  - The receiver is using `X-Watcher-Delivery-ID` instead of `event_id` for idempotency.
+
+- **Webhook traffic stops after a bad rollout**
+  - The watcher likely auto-paused after repeated failures. Resume manually after fixing the receiver, then decide whether suppressed events should be replayed.
 
 ---
 

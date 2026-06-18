@@ -84,7 +84,7 @@ func registerRoutes(api huma.API, cfg config.Config, handler *Handler) {
 		Method:      http.MethodGet,
 		Path:        "/api/v1/routes",
 		Summary:     "List routes",
-		Description: "Returns the current persisted routing rules that the in-memory routing engine evaluates for normalized events. Each rule is additive, and duplicate destination matches are collapsed during delivery creation.",
+		Description: "Returns the current persisted routing rules that the in-memory routing engine evaluates for normalized events. Each rule is additive, and duplicate destination matches are collapsed during delivery creation. Empty selector arrays mean 'match anything'; blank selector values are rejected at write time.",
 		Tags:        []string{"Routes"},
 		Security:    []map[string][]string{{"bearerAuth": {}}},
 	}, handler.listRoutes)
@@ -104,7 +104,7 @@ func registerRoutes(api huma.API, cfg config.Config, handler *Handler) {
 		Method:      http.MethodPost,
 		Path:        "/api/v1/routes",
 		Summary:     "Create route",
-		Description: "Creates a new persisted routing rule. The application validates referenced destinations, stores the rule durably, and reloads the in-memory routing engine after the write succeeds.",
+		Description: "Creates a new persisted routing rule. The application validates referenced destinations and selector values, stores the rule durably, and reloads the in-memory routing engine after the write succeeds. Omit any selector field you want to behave as a wildcard.",
 		Tags:        []string{"Routes"},
 		Security:    []map[string][]string{{"bearerAuth": {}}},
 	}, handler.createRoute)
@@ -114,7 +114,7 @@ func registerRoutes(api huma.API, cfg config.Config, handler *Handler) {
 		Method:      http.MethodPut,
 		Path:        "/api/v1/routes/{route_id}",
 		Summary:     "Update route",
-		Description: "Replaces the stored match criteria and destination targets for one routing rule, then refreshes the active in-memory routing engine so new events start using the updated policy immediately.",
+		Description: "Replaces the stored match criteria and destination targets for one routing rule, then refreshes the active in-memory routing engine so new events start using the updated policy immediately. Omit any selector field you want to behave as a wildcard; blank strings are rejected.",
 		Tags:        []string{"Routes"},
 		Security:    []map[string][]string{{"bearerAuth": {}}},
 	}, handler.updateRoute)

@@ -1,0 +1,95 @@
+package app
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/iweka-dev/webhook-hub/internal/clock"
+	"github.com/iweka-dev/webhook-hub/internal/config"
+	"github.com/iweka-dev/webhook-hub/internal/domain"
+	"github.com/iweka-dev/webhook-hub/internal/routing"
+)
+
+func TestCreateRouteRejectsBlankSelectorValues(t *testing.T) {
+	svc := newTestService()
+
+	_, err := svc.CreateRoute(context.Background(), "Bearer admin-secret", domain.Route{
+		ID:          "watcher-all-events",
+		Description: "Send all Watcher events to Slack",
+		Match: domain.RouteMatchCriteria{
+			Environments: []string{""},
+		},
+		Destinations: []string{"slack-deployments"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "environments") {
+		t.Fatalf("expected environment validation error, got %v", err)
+	}
+}
+
+func TestCreateRouteRejectsUnknownEnumValues(t *testing.T) {
+	svc := newTestService()
+
+	_, err := svc.CreateRoute(context.Background(), "Bearer admin-secret", domain.Route{
+		ID: "watcher-all-events",
+		Match: domain.RouteMatchCriteria{
+			Sources: []domain.Source{domain.SourceWatcher},
+			Types:   []string{"watcher.deployment.not-real"},
+		},
+		Destinations: []string{"slack-deployments"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "route types contains unknown value") {
+		t.Fatalf("expected unknown event type error, got %v", err)
+	}
+}
+
+func TestCreateRouteAllowsWildcardSelectors(t *testing.T) {
+	svc := newTestService()
+
+	route, err := svc.CreateRoute(context.Background(), "Bearer admin-secret", domain.Route{
+		ID:          "watcher-all-events",
+		Description: "Send all Watcher events to Slack",
+		Match: domain.RouteMatchCriteria{
+			Sources: []domain.Source{domain.SourceWatcher},
+		},
+		Destinations: []string{"slack-deployments"},
+	})
+	if err != nil {
+		t.Fatalf("create route: %v", err)
+	}
+	if route.ID != "watcher-all-events" {
+		t.Fatalf("unexpected route returned: %+v", route)
+	}
+}
+
+func newTestService() *Service {
+	return NewService(config.Config{
+		API: config.APIConfig{
+			ResolvedAdminToken: "admin-secret",
+		},
+		Destinations: map[string]config.DestinationConfig{
+			"slack-deployments": {
+				Type: domain.DestinationSlack,
+			},
+		},
+	}, clock.Real{}, &routeStoreStub{}, nil, routing.New(nil))
+}
+
+type routeStoreStub struct{}
+
+func (routeStoreStub) ListRoutes(context.Context) ([]domain.Route, error) { return nil, nil }
+func (routeStoreStub) GetRoute(context.Context, string) (domain.Route, error) {
+	return domain.Route{}, context.Canceled
+}
+func (routeStoreStub) CreateRoute(context.Context, domain.Route) error { return nil }
+func (routeStoreStub) UpdateRoute(context.Context, domain.Route) error { return nil }
+func (routeStoreStub) DeleteRoute(context.Context, string) error       { return nil }
+func (routeStoreStub) GetDelivery(context.Context, string) (domain.Delivery, error) {
+	return domain.Delivery{}, context.Canceled
+}
+func (routeStoreStub) ListDeliveries(context.Context, domain.DeliveryFilter) (domain.DeliveryPage, error) {
+	return domain.DeliveryPage{}, nil
+}
+func (routeStoreStub) RetryDelivery(context.Context, string, time.Time) error { return nil }
+func (routeStoreStub) Ping(context.Context) error                             { return nil }

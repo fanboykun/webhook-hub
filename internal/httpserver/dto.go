@@ -120,15 +120,15 @@ type routesResponse struct {
 type routeModel struct {
 	ID           string             `json:"id" doc:"Stable unique route identifier." example:"watcher-all-events"`
 	Description  string             `json:"description,omitempty" doc:"Optional operator-facing note about why this route exists." example:"Send all Watcher events to Telegram bot"`
-	Match        routeMatchModel    `json:"match" doc:"Different fields are ANDed together. Multiple values inside one field are ORed."`
+	Match        routeMatchModel    `json:"match" doc:"Different fields are ANDed together. Multiple values inside one field are ORed. Omit a field to make it unrestricted; do not send blank strings."`
 	Destinations []routeDestination `json:"destinations" doc:"Destination IDs that should receive matched events."`
 }
 
 type routeMatchModel struct {
-	Sources      []routeSource    `json:"sources,omitempty" doc:"Normalized source names such as watcher or github."`
-	Types        []routeEventType `json:"types,omitempty" doc:"Normalized event types such as watcher.deployment.failed."`
-	Severities   []routeSeverity  `json:"severities,omitempty" doc:"Normalized severities: debug, info, warning, error, critical."`
-	Environments []string         `json:"environments,omitempty" doc:"Environment values from normalized events."`
+	Sources      []routeSource    `json:"sources,omitempty" doc:"Normalized source names such as watcher or github. Leave empty to match all sources."`
+	Types        []routeEventType `json:"types,omitempty" doc:"Normalized event types such as watcher.deployment.failed. Leave empty to match all event types."`
+	Severities   []routeSeverity  `json:"severities,omitempty" doc:"Normalized severities: debug, info, warning, error, critical. Leave empty to match any severity."`
+	Environments []string         `json:"environments,omitempty" doc:"Environment values from normalized events. Leave empty to match any environment. Blank strings are rejected."`
 }
 
 type listRoutesInput struct {

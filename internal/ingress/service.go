@@ -116,8 +116,28 @@ func (s *Service) Handle(ctx context.Context, source domain.Source, req InboundR
 	}
 
 	result, err := s.store.Ingest(ctx, batch)
-	if err == nil {
-		s.logger.Info("webhook.accepted", "source", source, "integration_id", req.IntegrationID, "receipt_id", result.ReceiptID, "delivery_count", result.DeliveryCount)
+	if err == nil && s.logger != nil {
+		fields := []any{
+			"source", source,
+			"integration_id", req.IntegrationID,
+			"receipt_id", result.ReceiptID,
+			"event_count", result.EventCount,
+			"delivery_count", result.DeliveryCount,
+			"status", result.Status,
+		}
+		if receipt.IgnoreReason != "" {
+			fields = append(fields, "ignore_reason", receipt.IgnoreReason)
+		}
+		switch {
+		case result.Duplicate:
+			s.logger.Info("webhook.duplicate", fields...)
+		case result.Status == domain.ReceiptIgnored:
+			s.logger.Info("webhook.ignored", fields...)
+		case result.Status == domain.ReceiptUnrouted:
+			s.logger.Info("webhook.unrouted", fields...)
+		default:
+			s.logger.Info("webhook.accepted", fields...)
+		}
 	}
 	return result, err
 }

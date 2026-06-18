@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 
@@ -18,10 +19,10 @@ type Server struct {
 	http   *http.Server
 }
 
-func New(cfg config.Config, service *app.Service) *Server {
+func New(cfg config.Config, service *app.Service, logger *slog.Logger) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
-	engine.Use(gin.Recovery())
+	engine.Use(requestLoggingMiddleware(logger), gin.Recovery())
 
 	apiConfig := huma.DefaultConfig("Webhook Notification Gateway", "0.1.0")
 	apiConfig.DocsPath = ""
