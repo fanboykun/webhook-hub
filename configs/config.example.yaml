@@ -1,0 +1,61 @@
+server:
+  address: ":4001"
+  read_header_timeout: 5s
+  read_timeout: 15s
+  write_timeout: 15s
+  idle_timeout: 60s
+  shutdown_timeout: 20s
+  max_webhook_body_bytes: 1048576
+  trusted_proxies: []
+
+api:
+  # Committed example uses an environment-variable reference.
+  # Example actual env value: export GATEWAY_ADMIN_TOKEN="$(make gen-token)"
+  admin_token_env: GATEWAY_ADMIN_TOKEN
+  docs_enabled: true
+
+logging:
+  level: info
+  format: json
+  add_source: false
+
+database:
+  path: ./data/gateway.db
+  busy_timeout: 5s
+  max_open_connections: 1
+  retain_raw_payloads: true
+
+workers:
+  poll_interval: 1s
+  batch_size: 50
+  concurrency: 1
+  lease_duration: 2m
+  recovery_interval: 30s
+
+retry:
+  max_attempts: 8
+  base_delay: 2s
+  max_delay: 15m
+  jitter: 0.20
+
+integrations:
+  watcher-production:
+    source: watcher
+    secret_env: WATCHER_WEBHOOK_SECRET
+    replay_window: 5m
+
+  github-main:
+    source: github
+    secret_env: GITHUB_WEBHOOK_SECRET
+
+destinations:
+  slack-deployments:
+    type: slack
+    webhook_url_env: SLACK_DEPLOYMENTS_WEBHOOK_URL
+    profile: detailed
+
+  telegram-bot:
+    type: telegram
+    bot_token_env: TELEGRAM_ONCALL_BOT_TOKEN
+    chat_id: "-100123456789"
+    profile: compact

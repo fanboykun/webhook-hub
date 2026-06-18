@@ -1,0 +1,142 @@
+package ingress
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+
+	"github.com/iweka-dev/webhook-hub/internal/clock"
+	"github.com/iweka-dev/webhook-hub/internal/config"
+	"github.com/iweka-dev/webhook-hub/internal/domain"
+	"github.com/iweka-dev/webhook-hub/internal/id"
+	"github.com/iweka-dev/webhook-hub/internal/routing"
+	"github.com/iweka-dev/webhook-hub/internal/storage"
+)
+
+type Service struct {
+	store    storage.Store
+	cfg      config.Config
+	adapters *Registry
+	router   *routing.Engine
+	clock    clock.Clock
+	logger   *slog.Logger
+}
+
+func NewService(store storage.Store, cfg config.Config, adapters *Registry, router *routing.Engine, clk clock.Clock, logger *slog.Logger) *Service {
+	return &Service{store: store, cfg: cfg, adapters: adapters, router: router, clock: clk, logger: logger}
+}
+
+func (s *Service) Handle(ctx context.Context, source domain.Source, req InboundRequest) (domain.IngestResult, error) {
+	integration, ok := s.cfg.Integrations[req.IntegrationID]
+	if !ok {
+		return domain.IngestResult{}, ErrUnknownIntegration
+	}
+	if integration.Source != source {
+		return domain.IngestResult{}, ErrWrongSource
+	}
+
+	adapter, ok := s.adapters.Get(source)
+	if !ok {
+		return domain.IngestResult{}, fmt.Errorf("no adapter for source %s", source)
+	}
+	if err := adapter.Verify(ctx, integration, req); err != nil {
+		return domain.IngestResult{}, err
+	}
+
+	normalized, err := adapter.Normalize(ctx, req.IntegrationID, integration, req)
+	if err != nil {
+		return domain.IngestResult{}, err
+	}
+
+	now := s.clock.Now()
+	payloadHash := sha256.Sum256(req.RawBody)
+	headersJSON, _ := json.Marshal(sanitizedHeaders(source, req.Headers))
+
+	receiptID := id.New(now)
+	receipt := domain.Receipt{
+		ID:               receiptID,
+		Source:           source,
+		IntegrationID:    req.IntegrationID,
+		SourceDeliveryID: normalized.SourceDeliveryID,
+		SourceEventType:  normalized.SourceEventType,
+		PayloadSHA256:    hex.EncodeToString(payloadHash[:]),
+		RawPayload:       req.RawBody,
+		HeadersJSON:      headersJSON,
+		ReceivedAt:       req.ReceivedAt.UTC(),
+		Status:           domain.ReceiptAccepted,
+		IgnoreReason:     normalized.IgnoreReason,
+		CreatedAt:        now,
+	}
+
+	if len(normalized.Events) == 0 {
+		receipt.Status = domain.ReceiptIgnored
+		return s.store.Ingest(ctx, domain.IngestBatch{Receipt: receipt})
+	}
+
+	batch := domain.IngestBatch{
+		Receipt:         receipt,
+		Events:          make([]domain.Event, 0, len(normalized.Events)),
+		DeliveryByEvent: make(map[string][]domain.Delivery, len(normalized.Events)),
+	}
+
+	totalMatches := 0
+	for _, event := range normalized.Events {
+		event.ID = id.New(now)
+		event.ReceiptID = receiptID
+		event.CreatedAt = now
+
+		matches := s.router.Destinations(event)
+		deliveries := make([]domain.Delivery, 0, len(matches))
+		for _, match := range matches {
+			destination := s.cfg.Destinations[match.DestinationID]
+			deliveries = append(deliveries, domain.Delivery{
+				ID:              id.New(now),
+				EventID:         event.ID,
+				DestinationID:   match.DestinationID,
+				DestinationType: destination.Type,
+				Status:          domain.DeliveryPending,
+				MaxAttempts:     s.cfg.Retry.MaxAttempts,
+				NextAttemptAt:   now,
+				CreatedAt:       now,
+				UpdatedAt:       now,
+			})
+		}
+		totalMatches += len(deliveries)
+		batch.Events = append(batch.Events, event)
+		batch.DeliveryByEvent[event.ID] = deliveries
+	}
+
+	if totalMatches == 0 {
+		receipt.Status = domain.ReceiptUnrouted
+		batch.Receipt = receipt
+	}
+
+	result, err := s.store.Ingest(ctx, batch)
+	if err == nil {
+		s.logger.Info("webhook.accepted", "source", source, "integration_id", req.IntegrationID, "receipt_id", result.ReceiptID, "delivery_count", result.DeliveryCount)
+	}
+	return result, err
+}
+
+func sanitizedHeaders(source domain.Source, headers http.Header) map[string]string {
+	out := map[string]string{
+		"Content-Type": headers.Get("Content-Type"),
+	}
+
+	switch source {
+	case domain.SourceWatcher:
+		out["X-Watcher-Event"] = headers.Get("X-Watcher-Event")
+		out["X-Watcher-Event-ID"] = headers.Get("X-Watcher-Event-ID")
+		out["X-Watcher-Delivery-ID"] = headers.Get("X-Watcher-Delivery-ID")
+		out["X-Watcher-Timestamp"] = headers.Get("X-Watcher-Timestamp")
+	case domain.SourceGitHub:
+		out["X-GitHub-Event"] = headers.Get("X-GitHub-Event")
+		out["X-GitHub-Delivery"] = headers.Get("X-GitHub-Delivery")
+	}
+
+	return out
+}

@@ -1,0 +1,263 @@
+package config
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/iweka-dev/webhook-hub/internal/domain"
+	"github.com/spf13/viper"
+)
+
+type Config struct {
+	Server       ServerConfig                 `mapstructure:"server"`
+	API          APIConfig                    `mapstructure:"api"`
+	Logging      LoggingConfig                `mapstructure:"logging"`
+	Database     DatabaseConfig               `mapstructure:"database"`
+	Workers      WorkersConfig                `mapstructure:"workers"`
+	Retry        RetryConfig                  `mapstructure:"retry"`
+	Integrations map[string]IntegrationConfig `mapstructure:"integrations"`
+	Destinations map[string]DestinationConfig `mapstructure:"destinations"`
+}
+
+type ServerConfig struct {
+	Address             string        `mapstructure:"address"`
+	ReadHeaderTimeout   time.Duration `mapstructure:"read_header_timeout"`
+	ReadTimeout         time.Duration `mapstructure:"read_timeout"`
+	WriteTimeout        time.Duration `mapstructure:"write_timeout"`
+	IdleTimeout         time.Duration `mapstructure:"idle_timeout"`
+	ShutdownTimeout     time.Duration `mapstructure:"shutdown_timeout"`
+	MaxWebhookBodyBytes int64         `mapstructure:"max_webhook_body_bytes"`
+	TrustedProxies      []string      `mapstructure:"trusted_proxies"`
+}
+
+type APIConfig struct {
+	DocsEnabled        bool   `mapstructure:"docs_enabled"`
+	AdminTokenEnv      string `mapstructure:"admin_token_env"`
+	ResolvedAdminToken string `mapstructure:"-"`
+}
+
+type LoggingConfig struct {
+	Level     string `mapstructure:"level"`
+	Format    string `mapstructure:"format"`
+	AddSource bool   `mapstructure:"add_source"`
+}
+
+type DatabaseConfig struct {
+	Path               string        `mapstructure:"path"`
+	BusyTimeout        time.Duration `mapstructure:"busy_timeout"`
+	MaxOpenConnections int           `mapstructure:"max_open_connections"`
+	RetainRawPayloads  bool          `mapstructure:"retain_raw_payloads"`
+}
+
+type WorkersConfig struct {
+	PollInterval     time.Duration `mapstructure:"poll_interval"`
+	BatchSize        int           `mapstructure:"batch_size"`
+	Concurrency      int           `mapstructure:"concurrency"`
+	LeaseDuration    time.Duration `mapstructure:"lease_duration"`
+	RecoveryInterval time.Duration `mapstructure:"recovery_interval"`
+}
+
+type RetryConfig struct {
+	MaxAttempts int           `mapstructure:"max_attempts"`
+	BaseDelay   time.Duration `mapstructure:"base_delay"`
+	MaxDelay    time.Duration `mapstructure:"max_delay"`
+	Jitter      float64       `mapstructure:"jitter"`
+}
+
+type IntegrationConfig struct {
+	Source          domain.Source `mapstructure:"source"`
+	SecretEnv       string        `mapstructure:"secret_env"`
+	ClientSecretEnv string        `mapstructure:"client_secret_env"`
+	ReplayWindow    time.Duration `mapstructure:"replay_window"`
+	ResolvedSecret  string        `mapstructure:"-"`
+}
+
+type DestinationConfig struct {
+	Type          domain.DestinationType `mapstructure:"type"`
+	WebhookURLEnv string                 `mapstructure:"webhook_url_env"`
+	BotTokenEnv   string                 `mapstructure:"bot_token_env"`
+	ChatID        string                 `mapstructure:"chat_id"`
+	APIBaseURL    string                 `mapstructure:"api_base_url"`
+	Profile       string                 `mapstructure:"profile"`
+	ResolvedURL   string                 `mapstructure:"-"`
+	ResolvedToken string                 `mapstructure:"-"`
+}
+
+var envRefPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+
+func Load(path string) (Config, error) {
+	var cfg Config
+
+	v := viper.New()
+	v.SetConfigFile(path)
+	v.SetConfigType("yaml")
+	v.AutomaticEnv()
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
+	if err := v.ReadInConfig(); err != nil {
+		return cfg, fmt.Errorf("read config: %w", err)
+	}
+
+	if err := v.Unmarshal(&cfg); err != nil {
+		return cfg, fmt.Errorf("decode config: %w", err)
+	}
+
+	if err := cfg.resolveSecrets(); err != nil {
+		return cfg, err
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return cfg, err
+	}
+
+	return cfg, nil
+}
+
+func LoadFromEnv() (Config, error) {
+	path := os.Getenv("GATEWAY_CONFIG")
+	if path == "" {
+		path = DefaultPath()
+	}
+	return Load(path)
+}
+
+func DefaultPath() string {
+	const (
+		localPath   = "config.yaml"
+		examplePath = "configs/config.example.yaml"
+	)
+
+	if _, err := os.Stat(localPath); err == nil {
+		return localPath
+	}
+
+	if _, err := os.Stat(examplePath); err == nil {
+		return examplePath
+	}
+
+	return filepath.Clean(localPath)
+}
+
+func (c *Config) resolveSecrets() error {
+	adminToken, key, err := resolveSecretValue(c.API.AdminTokenEnv)
+	if err != nil {
+		return fmt.Errorf("api admin token %q: %w", key, err)
+	}
+	c.API.ResolvedAdminToken = adminToken
+
+	for id, integration := range c.Integrations {
+		value, key, err := resolveSecretValue(integration.SecretEnv)
+		if integration.Source == domain.SourceSentry && integration.ClientSecretEnv != "" {
+			value, key, err = resolveSecretValue(integration.ClientSecretEnv)
+		}
+		if err != nil {
+			return fmt.Errorf("integration %q secret env %q: %w", id, key, err)
+		}
+		if value == "" {
+			continue
+		}
+		integration.ResolvedSecret = value
+		c.Integrations[id] = integration
+	}
+
+	for id, destination := range c.Destinations {
+		switch destination.Type {
+		case domain.DestinationSlack:
+			value, key, err := resolveSecretValue(destination.WebhookURLEnv)
+			if err != nil {
+				return fmt.Errorf("destination %q webhook env %q: %w", id, key, err)
+			}
+			if value == "" {
+				return fmt.Errorf("destination %q webhook env %q is empty", id, destination.WebhookURLEnv)
+			}
+			destination.ResolvedURL = value
+		case domain.DestinationTelegram:
+			value, key, err := resolveSecretValue(destination.BotTokenEnv)
+			if err != nil {
+				return fmt.Errorf("destination %q bot token env %q: %w", id, key, err)
+			}
+			if value == "" {
+				return fmt.Errorf("destination %q bot token env %q is empty", id, destination.BotTokenEnv)
+			}
+			destination.ResolvedToken = value
+		}
+		c.Destinations[id] = destination
+	}
+
+	return nil
+}
+
+func (c Config) Validate() error {
+	var errs []error
+
+	if strings.TrimSpace(c.Server.Address) == "" {
+		errs = append(errs, errors.New("server.address is required"))
+	}
+	if c.Server.MaxWebhookBodyBytes <= 0 {
+		errs = append(errs, errors.New("server.max_webhook_body_bytes must be > 0"))
+	}
+	if strings.TrimSpace(c.Database.Path) == "" {
+		errs = append(errs, errors.New("database.path is required"))
+	}
+	if c.Workers.BatchSize <= 0 {
+		errs = append(errs, errors.New("workers.batch_size must be > 0"))
+	}
+	if c.Workers.Concurrency <= 0 {
+		errs = append(errs, errors.New("workers.concurrency must be > 0"))
+	}
+	if c.Retry.MaxAttempts <= 0 {
+		errs = append(errs, errors.New("retry.max_attempts must be > 0"))
+	}
+
+	for id, integration := range c.Integrations {
+		if integration.Source == "" {
+			errs = append(errs, fmt.Errorf("integration %q source is required", id))
+		}
+		if integration.ReplayWindow < 0 {
+			errs = append(errs, fmt.Errorf("integration %q replay_window must be >= 0", id))
+		}
+	}
+
+	for id, destination := range c.Destinations {
+		switch destination.Type {
+		case domain.DestinationSlack:
+			if strings.TrimSpace(destination.WebhookURLEnv) == "" {
+				errs = append(errs, fmt.Errorf("destination %q webhook_url_env is required", id))
+			}
+		case domain.DestinationTelegram:
+			if strings.TrimSpace(destination.BotTokenEnv) == "" {
+				errs = append(errs, fmt.Errorf("destination %q bot_token_env is required", id))
+			}
+			if strings.TrimSpace(destination.ChatID) == "" {
+				errs = append(errs, fmt.Errorf("destination %q chat_id is required", id))
+			}
+		default:
+			errs = append(errs, fmt.Errorf("destination %q type %q is not yet supported in this slice", id, destination.Type))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func resolveSecretValue(ref string) (string, string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", "", nil
+	}
+
+	if !envRefPattern.MatchString(ref) {
+		return ref, ref, nil
+	}
+
+	value := strings.TrimSpace(os.Getenv(ref))
+	if value == "" {
+		return "", ref, fmt.Errorf("referenced environment variable is empty")
+	}
+
+	return value, ref, nil
+}

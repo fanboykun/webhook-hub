@@ -1,0 +1,29 @@
+root = "."
+testdata_dir = "testdata"
+tmp_dir = "tmp/air"
+
+[build]
+cmd = "go build -buildvcs=false -o ./tmp/air/gateway ./cmd/gateway"
+bin = "./tmp/air/gateway"
+full_bin = "GATEWAY_CONFIG=config.yaml WATCHER_WEBHOOK_SECRET=dev-watcher-secret GITHUB_WEBHOOK_SECRET=dev-github-secret SLACK_DEPLOYMENTS_WEBHOOK_URL=https://example.invalid/webhook TELEGRAM_ONCALL_BOT_TOKEN=dev-telegram-token GATEWAY_ADMIN_TOKEN=dev-admin-token ./tmp/air/gateway"
+include_ext = ["go", "yaml", "yml", "json", "md"]
+exclude_dir = ["tmp", ".git", ".idea", ".vscode", ".bin"]
+exclude_regex = ["_test\\.go"]
+exclude_unchanged = false
+follow_symlink = false
+kill_delay = "500ms"
+stop_on_error = true
+
+[color]
+app = "cyan"
+build = "yellow"
+main = "magenta"
+runner = "green"
+watcher = "blue"
+
+[log]
+main_only = false
+time = true
+
+[misc]
+clean_on_exit = false

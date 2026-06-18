@@ -1,0 +1,590 @@
+package httpserver
+
+import (
+	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/iweka-dev/webhook-hub/internal/app"
+	"github.com/iweka-dev/webhook-hub/internal/clock"
+	"github.com/iweka-dev/webhook-hub/internal/config"
+	"github.com/iweka-dev/webhook-hub/internal/domain"
+	"github.com/iweka-dev/webhook-hub/internal/ingress"
+	ghingress "github.com/iweka-dev/webhook-hub/internal/ingress/github"
+	"github.com/iweka-dev/webhook-hub/internal/ingress/watcher"
+	"github.com/iweka-dev/webhook-hub/internal/observability"
+	"github.com/iweka-dev/webhook-hub/internal/routing"
+	"github.com/iweka-dev/webhook-hub/internal/storage/sqlite"
+)
+
+func TestWatcherWebhookAccepted(t *testing.T) {
+	t.Setenv("WATCHER_WEBHOOK_SECRET", "secret")
+	t.Setenv("SLACK_DEPLOYMENTS_WEBHOOK_URL", "https://example.invalid")
+	cfg := testConfig(t)
+
+	store, err := sqlite.Open(cfg.Database, observability.NewLogger(cfg.Logging))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	server := newTestServer(t, cfg, store, nil)
+
+	body := map[string]any{
+		"schema_version": 1,
+		"id":             "deploy_01",
+		"event":          "deployment.failed",
+		"occurred_at":    "2026-06-18T08:42:10Z",
+		"service":        "auth-service",
+		"environment":    "production",
+		"version":        "v2.4.1",
+		"commit_sha":     "abc123",
+		"actor":          "joyy",
+		"url":            "https://watcher.example/deployments/deploy_01",
+		"error":          map[string]any{"message": "Health check failed", "stage": "verify"},
+		"labels":         map[string]string{"team": "platform"},
+	}
+	rawBody, _ := json.Marshal(body)
+	ts := time.Now().UTC().Format(time.RFC3339)
+	signature := watcherSignature("secret", ts, rawBody)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/v1/watcher/watcher-production", bytes.NewReader(rawBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Watcher-Event-ID", "deploy_01:deployment.failed")
+	req.Header.Set("X-Watcher-Timestamp", ts)
+	req.Header.Set("X-Watcher-Signature", signature)
+
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+		t.Fatalf("expected success, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWatcherWebhookUnauthorized(t *testing.T) {
+	t.Setenv("WATCHER_WEBHOOK_SECRET", "secret")
+	t.Setenv("SLACK_DEPLOYMENTS_WEBHOOK_URL", "https://example.invalid")
+	cfg := testConfig(t)
+
+	store, err := sqlite.Open(cfg.Database, observability.NewLogger(cfg.Logging))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	server := newTestServer(t, cfg, store, nil)
+
+	body := map[string]any{
+		"schema_version": 1,
+		"id":             "deploy_01",
+		"event":          "deployment.failed",
+		"occurred_at":    "2026-06-18T08:42:10Z",
+		"service":        "auth-service",
+		"environment":    "production",
+		"version":        "v2.4.1",
+		"commit_sha":     "abc123",
+		"actor":          "joyy",
+		"url":            "https://watcher.example/deployments/deploy_01",
+		"error":          map[string]any{"message": "Health check failed", "stage": "verify"},
+		"labels":         map[string]string{"team": "platform"},
+	}
+	rawBody, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/v1/watcher/watcher-production", bytes.NewReader(rawBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Watcher-Event-ID", "deploy_01:deployment.failed")
+	req.Header.Set("X-Watcher-Timestamp", time.Now().UTC().Format(time.RFC3339))
+	req.Header.Set("X-Watcher-Signature", "bad")
+
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGitHubWebhookAccepted(t *testing.T) {
+	t.Setenv("WATCHER_WEBHOOK_SECRET", "secret")
+	t.Setenv("SLACK_DEPLOYMENTS_WEBHOOK_URL", "https://example.invalid")
+	cfg := testConfig(t)
+
+	store, err := sqlite.Open(cfg.Database, observability.NewLogger(cfg.Logging))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	server := newTestServer(t, cfg, store, nil)
+
+	rawBody, _ := json.Marshal(map[string]any{
+		"action": "published",
+		"repository": map[string]any{
+			"full_name": "iweka-dev/webhook-hub",
+			"html_url":  "https://github.com/iweka-dev/webhook-hub",
+		},
+		"sender": map[string]any{
+			"login": "joyy",
+		},
+		"release": map[string]any{
+			"tag_name": "v1.0.0",
+			"name":     "v1.0.0",
+			"html_url": "https://github.com/iweka-dev/webhook-hub/releases/tag/v1.0.0",
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/v1/github/github-main", bytes.NewReader(rawBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GitHub-Event", "release")
+	req.Header.Set("X-GitHub-Delivery", "gh-delivery-1")
+	req.Header.Set("X-Hub-Signature-256", githubSignature("github-secret", rawBody))
+
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+		t.Fatalf("expected success, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestOpenAPIIncludesWatcherWebhook(t *testing.T) {
+	t.Setenv("WATCHER_WEBHOOK_SECRET", "secret")
+	t.Setenv("SLACK_DEPLOYMENTS_WEBHOOK_URL", "https://example.invalid")
+	cfg := testConfig(t)
+
+	store, err := sqlite.Open(cfg.Database, observability.NewLogger(cfg.Logging))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	server := newTestServer(t, cfg, store, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	body, err := io.ReadAll(rec.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if !bytes.Contains(body, []byte("/webhooks/v1/watcher/{integration_id}")) {
+		t.Fatalf("openapi missing watcher webhook path: %s", string(body))
+	}
+	if !bytes.Contains(body, []byte("/webhooks/v1/github/{integration_id}")) {
+		t.Fatalf("openapi missing github webhook path: %s", string(body))
+	}
+	if !bytes.Contains(body, []byte("/api/v1/deliveries/{delivery_id}")) {
+		t.Fatalf("openapi missing delivery detail path: %s", string(body))
+	}
+	if !bytes.Contains(body, []byte(`"bearerAuth"`)) {
+		t.Fatalf("openapi missing bearer auth scheme: %s", string(body))
+	}
+	if !bytes.Contains(body, []byte(`"slack-deployments"`)) {
+		t.Fatalf("openapi missing configured destination enum: %s", string(body))
+	}
+}
+
+func TestDocsUsesScalarRenderer(t *testing.T) {
+	t.Setenv("WATCHER_WEBHOOK_SECRET", "secret")
+	t.Setenv("SLACK_DEPLOYMENTS_WEBHOOK_URL", "https://example.invalid")
+	cfg := testConfig(t)
+
+	store, err := sqlite.Open(cfg.Database, observability.NewLogger(cfg.Logging))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	server := newTestServer(t, cfg, store, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("@scalar/api-reference")) {
+		t.Fatalf("docs page is not using scalar: %s", rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("persistAuth: true")) {
+		t.Fatalf("docs page does not persist auth: %s", rec.Body.String())
+	}
+}
+
+func TestDeliveryDetailAuthorized(t *testing.T) {
+	t.Setenv("WATCHER_WEBHOOK_SECRET", "secret")
+	t.Setenv("SLACK_DEPLOYMENTS_WEBHOOK_URL", "https://example.invalid")
+	t.Setenv("GATEWAY_ADMIN_TOKEN", "admin-secret")
+	cfg := testConfig(t)
+
+	store, err := sqlite.Open(cfg.Database, observability.NewLogger(cfg.Logging))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	now := time.Now().UTC()
+	if _, err := store.Ingest(context.Background(), deliverySeedBatch(now)); err != nil {
+		t.Fatalf("seed store: %v", err)
+	}
+
+	server := newTestServer(t, cfg, store, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/deliveries/d1", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"id":"d1"`)) {
+		t.Fatalf("unexpected response body: %s", rec.Body.String())
+	}
+}
+
+func TestListDeliveriesAuthorized(t *testing.T) {
+	t.Setenv("WATCHER_WEBHOOK_SECRET", "secret")
+	t.Setenv("SLACK_DEPLOYMENTS_WEBHOOK_URL", "https://example.invalid")
+	t.Setenv("GATEWAY_ADMIN_TOKEN", "admin-secret")
+	cfg := testConfig(t)
+
+	store, err := sqlite.Open(cfg.Database, observability.NewLogger(cfg.Logging))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	now := time.Now().UTC()
+	if _, err := store.Ingest(context.Background(), deliverySeedBatch(now)); err != nil {
+		t.Fatalf("seed store: %v", err)
+	}
+
+	server := newTestServer(t, cfg, store, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/deliveries?status=pending&destination_id=slack-deployments&limit=1", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"items":[`)) {
+		t.Fatalf("unexpected list response: %s", rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"id":"d1"`)) {
+		t.Fatalf("delivery d1 missing from list response: %s", rec.Body.String())
+	}
+}
+
+func TestDeliveryDetailUnauthorized(t *testing.T) {
+	t.Setenv("WATCHER_WEBHOOK_SECRET", "secret")
+	t.Setenv("SLACK_DEPLOYMENTS_WEBHOOK_URL", "https://example.invalid")
+	t.Setenv("GATEWAY_ADMIN_TOKEN", "admin-secret")
+	cfg := testConfig(t)
+
+	store, err := sqlite.Open(cfg.Database, observability.NewLogger(cfg.Logging))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	server := newTestServer(t, cfg, store, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/deliveries/d1", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRetryDeliveryAuthorized(t *testing.T) {
+	t.Setenv("WATCHER_WEBHOOK_SECRET", "secret")
+	t.Setenv("SLACK_DEPLOYMENTS_WEBHOOK_URL", "https://example.invalid")
+	t.Setenv("GATEWAY_ADMIN_TOKEN", "admin-secret")
+	cfg := testConfig(t)
+
+	store, err := sqlite.Open(cfg.Database, observability.NewLogger(cfg.Logging))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	now := time.Now().UTC()
+	seed := deliverySeedBatch(now)
+	seed.DeliveryByEvent["e1"][0].Status = domain.DeliveryDeadLetter
+	if _, err := store.Ingest(context.Background(), seed); err != nil {
+		t.Fatalf("seed store: %v", err)
+	}
+
+	server := newTestServer(t, cfg, store, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/deliveries/d1/retry", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	delivery, err := store.GetDelivery(context.Background(), "d1")
+	if err != nil {
+		t.Fatalf("get delivery: %v", err)
+	}
+	if delivery.Status != domain.DeliveryRetryWait {
+		t.Fatalf("expected retry_wait, got %s", delivery.Status)
+	}
+}
+
+func TestRoutesListAndReplaceAuthorized(t *testing.T) {
+	t.Setenv("WATCHER_WEBHOOK_SECRET", "secret")
+	t.Setenv("SLACK_DEPLOYMENTS_WEBHOOK_URL", "https://example.invalid")
+	t.Setenv("GATEWAY_ADMIN_TOKEN", "admin-secret")
+	cfg := testConfig(t)
+
+	store, err := sqlite.Open(cfg.Database, observability.NewLogger(cfg.Logging))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	for _, route := range seededRoutes() {
+		if err := store.CreateRoute(context.Background(), route); err != nil {
+			t.Fatalf("seed route: %v", err)
+		}
+	}
+
+	server := newTestServer(t, cfg, store, seededRoutes())
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/routes", nil)
+	listReq.Header.Set("Authorization", "Bearer admin-secret")
+	listRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(listRec, listReq)
+
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", listRec.Code, listRec.Body.String())
+	}
+	if !bytes.Contains(listRec.Body.Bytes(), []byte(`"id":"deployment-failed"`)) {
+		t.Fatalf("unexpected list response: %s", listRec.Body.String())
+	}
+
+	postBody := []byte(`{"id":"watcher-all-events","description":"Send all Watcher events to Telegram bot","match":{"sources":["watcher"]},"destinations":["slack-deployments"]}`)
+	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/routes", bytes.NewReader(postBody))
+	postReq.Header.Set("Authorization", "Bearer admin-secret")
+	postReq.Header.Set("Content-Type", "application/json")
+	postRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(postRec, postReq)
+
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", postRec.Code, postRec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/routes/watcher-all-events", nil)
+	getReq.Header.Set("Authorization", "Bearer admin-secret")
+	getRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(getRec, getReq)
+
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", getRec.Code, getRec.Body.String())
+	}
+
+	putBody := []byte(`{"id":"watcher-all-events","description":"Updated route","match":{"sources":["watcher"],"types":["watcher.deployment.failed"]},"destinations":["slack-deployments"]}`)
+	putReq := httptest.NewRequest(http.MethodPut, "/api/v1/routes/watcher-all-events", bytes.NewReader(putBody))
+	putReq.Header.Set("Authorization", "Bearer admin-secret")
+	putReq.Header.Set("Content-Type", "application/json")
+	putRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(putRec, putReq)
+
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", putRec.Code, putRec.Body.String())
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/routes/watcher-all-events", nil)
+	deleteReq.Header.Set("Authorization", "Bearer admin-secret")
+	deleteRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(deleteRec, deleteReq)
+
+	if deleteRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", deleteRec.Code, deleteRec.Body.String())
+	}
+
+	routes, err := store.ListRoutes(context.Background())
+	if err != nil {
+		t.Fatalf("list routes after replace: %v", err)
+	}
+	if len(routes) != len(seededRoutes()) {
+		t.Fatalf("unexpected routes after delete: %+v", routes)
+	}
+}
+
+func watcherSignature(secret, timestamp string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(timestamp))
+	mac.Write([]byte(":"))
+	mac.Write(body)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func githubSignature(secret string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func testRegistry() *ingress.Registry {
+	return ingress.NewRegistry(
+		watcher.NewAdapter(),
+		ghingress.NewAdapter(),
+	)
+}
+
+func testConfig(t *testing.T) config.Config {
+	t.Helper()
+	return config.Config{
+		Server: config.ServerConfig{
+			Address:             ":0",
+			ReadHeaderTimeout:   5 * time.Second,
+			ReadTimeout:         15 * time.Second,
+			WriteTimeout:        15 * time.Second,
+			IdleTimeout:         60 * time.Second,
+			ShutdownTimeout:     5 * time.Second,
+			MaxWebhookBodyBytes: 1 << 20,
+		},
+		API: config.APIConfig{
+			AdminTokenEnv:      "GATEWAY_ADMIN_TOKEN",
+			ResolvedAdminToken: "admin-secret",
+			DocsEnabled:        true,
+		},
+		Logging: config.LoggingConfig{Level: "debug", Format: "text"},
+		Database: config.DatabaseConfig{
+			Path:               t.TempDir() + "/gateway.db",
+			BusyTimeout:        5 * time.Second,
+			MaxOpenConnections: 1,
+			RetainRawPayloads:  true,
+		},
+		Workers: config.WorkersConfig{
+			BatchSize:     10,
+			Concurrency:   1,
+			LeaseDuration: time.Minute,
+		},
+		Retry: config.RetryConfig{
+			MaxAttempts: 3,
+			BaseDelay:   time.Second,
+			MaxDelay:    time.Minute,
+			Jitter:      0,
+		},
+		Integrations: map[string]config.IntegrationConfig{
+			"watcher-production": {
+				Source:         "watcher",
+				SecretEnv:      "WATCHER_WEBHOOK_SECRET",
+				ResolvedSecret: "secret",
+				ReplayWindow:   5 * time.Minute,
+			},
+			"github-main": {
+				Source:         "github",
+				SecretEnv:      "GITHUB_WEBHOOK_SECRET",
+				ResolvedSecret: "github-secret",
+			},
+		},
+		Destinations: map[string]config.DestinationConfig{
+			"slack-deployments": {
+				Type:          "slack",
+				WebhookURLEnv: "SLACK_DEPLOYMENTS_WEBHOOK_URL",
+				ResolvedURL:   "https://example.invalid",
+				Profile:       "detailed",
+			},
+		},
+	}
+}
+
+func seededRoutes() []domain.Route {
+	return []domain.Route{
+		{
+			ID:           "deployment-failed",
+			Match:        domain.RouteMatchCriteria{Types: []string{"watcher.deployment.failed"}},
+			Destinations: []string{"slack-deployments"},
+		},
+		{
+			ID:           "github-release",
+			Match:        domain.RouteMatchCriteria{Types: []string{"github.release.published"}},
+			Destinations: []string{"slack-deployments"},
+		},
+	}
+}
+
+func newTestServer(t *testing.T, cfg config.Config, store *sqlite.Store, routes []domain.Route) *Server {
+	t.Helper()
+	engine := routing.New(routes)
+	service := ingress.NewService(store, cfg, testRegistry(), engine, clock.Real{}, observability.NewLogger(cfg.Logging))
+	appService := app.NewService(cfg, clock.Real{}, store, service, engine)
+	if routes != nil {
+		engine.Replace(routes)
+	}
+	return New(cfg, appService)
+}
+
+func deliverySeedBatch(now time.Time) domain.IngestBatch {
+	return domain.IngestBatch{
+		Receipt: domain.Receipt{
+			ID:               "r1",
+			Source:           domain.SourceWatcher,
+			IntegrationID:    "watcher-production",
+			SourceDeliveryID: "event-1",
+			SourceEventType:  "deployment.failed",
+			PayloadSHA256:    "abc",
+			ReceivedAt:       now,
+			Status:           domain.ReceiptAccepted,
+			CreatedAt:        now,
+		},
+		Events: []domain.Event{
+			{
+				ID:            "e1",
+				ReceiptID:     "r1",
+				Source:        domain.SourceWatcher,
+				IntegrationID: "watcher-production",
+				Type:          "watcher.deployment.failed",
+				Action:        "deployment.failed",
+				Lifecycle:     domain.LifecycleFailed,
+				Severity:      domain.SeverityError,
+				Title:         "deployment failed",
+				Summary:       "health check failed",
+				Service:       "auth-service",
+				Environment:   "production",
+				OccurredAt:    now,
+				CreatedAt:     now,
+			},
+		},
+		DeliveryByEvent: map[string][]domain.Delivery{
+			"e1": {
+				{
+					ID:              "d1",
+					EventID:         "e1",
+					DestinationID:   "slack-deployments",
+					DestinationType: domain.DestinationSlack,
+					Status:          domain.DeliveryPending,
+					MaxAttempts:     3,
+					NextAttemptAt:   now,
+					CreatedAt:       now,
+					UpdatedAt:       now,
+				},
+			},
+		},
+	}
+}
