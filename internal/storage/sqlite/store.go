@@ -106,12 +106,80 @@ func (s *Store) DeleteRoute(ctx context.Context, id string) error {
 	return s.db.WithContext(ctx).Delete(&routeModel{}, "id = ?", id).Error
 }
 
+func (s *Store) GetReceipt(ctx context.Context, id string) (domain.Receipt, error) {
+	var model receiptModel
+	if err := s.db.WithContext(ctx).First(&model, "id = ?", id).Error; err != nil {
+		return domain.Receipt{}, err
+	}
+	return toDomainReceipt(model), nil
+}
+
+func (s *Store) ListReceipts(ctx context.Context, filter domain.ReceiptFilter) (domain.ReceiptPage, error) {
+	query := s.db.WithContext(ctx).Model(&receiptModel{}).Order("created_at DESC").Order("id DESC")
+	if filter.Status != "" {
+		query = query.Where("status = ?", string(filter.Status))
+	}
+	if filter.Source != "" {
+		query = query.Where("source = ?", string(filter.Source))
+	}
+	if filter.IntegrationID != "" {
+		query = query.Where("integration_id = ?", filter.IntegrationID)
+	}
+	if filter.From != nil {
+		query = query.Where("created_at >= ?", filter.From.UTC())
+	}
+	if filter.To != nil {
+		query = query.Where("created_at <= ?", filter.To.UTC())
+	}
+	if filter.Cursor != "" {
+		var cursor receiptModel
+		if err := s.db.WithContext(ctx).First(&cursor, "id = ?", filter.Cursor).Error; err != nil {
+			return domain.ReceiptPage{}, err
+		}
+		query = query.Where("(created_at < ?) OR (created_at = ? AND id < ?)", cursor.CreatedAt, cursor.CreatedAt, cursor.ID)
+	}
+
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+
+	var models []receiptModel
+	if err := query.Limit(limit + 1).Find(&models).Error; err != nil {
+		return domain.ReceiptPage{}, err
+	}
+
+	page := domain.ReceiptPage{
+		Items: make([]domain.Receipt, 0, minInt(len(models), limit)),
+	}
+	for i, model := range models {
+		if i == limit {
+			page.NextCursor = model.ID
+			break
+		}
+		page.Items = append(page.Items, toDomainReceipt(model))
+	}
+	return page, nil
+}
+
 func (s *Store) GetEvent(ctx context.Context, id string) (domain.Event, error) {
 	var model eventModel
 	if err := s.db.WithContext(ctx).First(&model, "id = ?", id).Error; err != nil {
 		return domain.Event{}, err
 	}
 	return toDomainEvent(model), nil
+}
+
+func (s *Store) ListEventsByReceipt(ctx context.Context, receiptID string) ([]domain.Event, error) {
+	var models []eventModel
+	if err := s.db.WithContext(ctx).Order("created_at ASC").Find(&models, "receipt_id = ?", receiptID).Error; err != nil {
+		return nil, err
+	}
+	out := make([]domain.Event, 0, len(models))
+	for _, model := range models {
+		out = append(out, toDomainEvent(model))
+	}
+	return out, nil
 }
 
 func (s *Store) ListDeliveries(ctx context.Context, filter domain.DeliveryFilter) (domain.DeliveryPage, error) {

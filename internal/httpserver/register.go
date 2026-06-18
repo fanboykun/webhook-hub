@@ -69,6 +69,26 @@ func registerRoutes(api huma.API, cfg config.Config, handler *Handler) {
 	}, handler.getDelivery)
 
 	huma.Register(api, huma.Operation{
+		OperationID: "receipt-detail",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/receipts/{receipt_id}",
+		Summary:     "Get receipt detail",
+		Description: "Returns one persisted webhook receipt together with the normalized events derived from it and any delivery rows created for those events. This is the quickest way to debug a webhook that was accepted but ended up unrouted, ignored, or partially delivered.",
+		Tags:        []string{"Receipts"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+	}, handler.getReceipt)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "receipts-list",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/receipts",
+		Summary:     "List receipts",
+		Description: "Returns persisted webhook receipts with optional filters for status, source, integration, and creation time window. Use this to locate unrouted hooks, duplicates, and ignored payloads before drilling into a specific receipt detail record.",
+		Tags:        []string{"Receipts"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+	}, handler.listReceipts)
+
+	huma.Register(api, huma.Operation{
 		OperationID:   "delivery-retry",
 		Method:        http.MethodPost,
 		Path:          "/api/v1/deliveries/{delivery_id}/retry",

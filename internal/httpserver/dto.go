@@ -1,6 +1,8 @@
 package httpserver
 
 import (
+	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -9,11 +11,11 @@ import (
 
 type watcherWebhookInput struct {
 	IntegrationID string `path:"integration_id"`
+	WebhookID     string `header:"webhook-id"`
+	Timestamp     string `header:"webhook-timestamp"`
+	Signature     string `header:"webhook-signature"`
 	Event         string `header:"X-Watcher-Event"`
-	EventID       string `header:"X-Watcher-Event-ID"`
 	DeliveryID    string `header:"X-Watcher-Delivery-ID"`
-	Timestamp     string `header:"X-Watcher-Timestamp"`
-	Signature     string `header:"X-Watcher-Signature"`
 	RawBody       []byte
 }
 
@@ -43,6 +45,22 @@ type healthResponse struct {
 type deliveryDetailInput struct {
 	Authorization string `header:"Authorization" hidden:"true"`
 	DeliveryID    string `path:"delivery_id"`
+}
+
+type receiptDetailInput struct {
+	Authorization string `header:"Authorization" hidden:"true"`
+	ReceiptID     string `path:"receipt_id"`
+}
+
+type listReceiptsInput struct {
+	Authorization string             `header:"Authorization" hidden:"true"`
+	Status        routeReceiptStatus `query:"status" doc:"Filter by receipt status."`
+	Source        routeSource        `query:"source" doc:"Filter by source name such as watcher or github."`
+	IntegrationID string             `query:"integration_id" doc:"Filter by the configured integration identifier."`
+	From          string             `query:"from" doc:"Lower created_at bound in RFC3339 format." example:"2026-06-18T00:00:00Z"`
+	To            string             `query:"to" doc:"Upper created_at bound in RFC3339 format." example:"2026-06-19T00:00:00Z"`
+	Limit         int                `query:"limit" doc:"Maximum number of results to return. Defaults to 50 and is capped at 100." example:"50"`
+	Cursor        string             `query:"cursor" doc:"Opaque pagination cursor returned by the previous response."`
 }
 
 type listDeliveriesInput struct {
@@ -80,6 +98,55 @@ type deliveryResponse struct {
 		CreatedAt         time.Time  `json:"created_at"`
 		UpdatedAt         time.Time  `json:"updated_at"`
 	}
+}
+
+type receiptResponse struct {
+	Body struct {
+		ID               string         `json:"id"`
+		Source           string         `json:"source"`
+		IntegrationID    string         `json:"integration_id"`
+		SourceDeliveryID string         `json:"source_delivery_id"`
+		SourceEventType  string         `json:"source_event_type"`
+		Status           string         `json:"status"`
+		IgnoreReason     string         `json:"ignore_reason,omitempty"`
+		ReceivedAt       time.Time      `json:"received_at"`
+		CreatedAt        time.Time      `json:"created_at"`
+		Events           []receiptEvent `json:"events"`
+	}
+}
+
+type receiptsResponse struct {
+	Body struct {
+		Items      []receiptItem `json:"items"`
+		NextCursor string        `json:"next_cursor,omitempty"`
+	}
+}
+
+type receiptItem struct {
+	ID               string             `json:"id"`
+	Source           routeSource        `json:"source"`
+	IntegrationID    string             `json:"integration_id"`
+	SourceDeliveryID string             `json:"source_delivery_id"`
+	SourceEventType  string             `json:"source_event_type"`
+	Status           routeReceiptStatus `json:"status"`
+	IgnoreReason     string             `json:"ignore_reason,omitempty"`
+	ReceivedAt       time.Time          `json:"received_at"`
+	CreatedAt        time.Time          `json:"created_at"`
+}
+
+type receiptEvent struct {
+	ID               string         `json:"id"`
+	SourceEventID    string         `json:"source_event_id,omitempty"`
+	Type             string         `json:"type"`
+	Lifecycle        string         `json:"lifecycle"`
+	Severity         string         `json:"severity"`
+	Title            string         `json:"title"`
+	Summary          string         `json:"summary"`
+	RouteMatchCount  int            `json:"route_match_count"`
+	RouteIDs         []string       `json:"route_ids,omitempty"`
+	DestinationIDs   []string       `json:"destination_ids,omitempty"`
+	DestinationCount int            `json:"delivery_count"`
+	Deliveries       []deliveryItem `json:"deliveries"`
 }
 
 type retryDeliveryOutput struct {
@@ -206,7 +273,7 @@ func domainRouteMatchFromModel(in routeMatchModel) domain.RouteMatchCriteria {
 		Sources:      routeSourcesToDomain(in.Sources),
 		Types:        routeEventTypesToStrings(in.Types),
 		Severities:   routeSeveritiesToDomain(in.Severities),
-		Environments: append([]string(nil), in.Environments...),
+		Environments: normalizeRouteStrings(in.Environments),
 	}
 }
 
@@ -221,6 +288,10 @@ func routeSourcesFromDomain(values []domain.Source) []routeSource {
 func routeSourcesToDomain(values []routeSource) []domain.Source {
 	out := make([]domain.Source, 0, len(values))
 	for _, value := range values {
+		value = routeSource(strings.TrimSpace(string(value)))
+		if value == "" {
+			continue
+		}
 		out = append(out, domain.Source(value))
 	}
 	return out
@@ -237,6 +308,10 @@ func routeEventTypesFromStrings(values []string) []routeEventType {
 func routeEventTypesToStrings(values []routeEventType) []string {
 	out := make([]string, 0, len(values))
 	for _, value := range values {
+		value = routeEventType(strings.TrimSpace(string(value)))
+		if value == "" {
+			continue
+		}
 		out = append(out, string(value))
 	}
 	return out
@@ -253,6 +328,10 @@ func routeSeveritiesFromDomain(values []domain.Severity) []routeSeverity {
 func routeSeveritiesToDomain(values []routeSeverity) []domain.Severity {
 	out := make([]domain.Severity, 0, len(values))
 	for _, value := range values {
+		value = routeSeverity(strings.TrimSpace(string(value)))
+		if value == "" {
+			continue
+		}
 		out = append(out, domain.Severity(value))
 	}
 	return out
@@ -269,7 +348,23 @@ func routeDestinationsFromStrings(values []string) []routeDestination {
 func routeDestinationsToStrings(values []routeDestination) []string {
 	out := make([]string, 0, len(values))
 	for _, value := range values {
+		value = routeDestination(strings.TrimSpace(string(value)))
+		if value == "" {
+			continue
+		}
 		out = append(out, string(value))
+	}
+	return out
+}
+
+func normalizeRouteStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		out = append(out, value)
 	}
 	return out
 }
@@ -343,4 +438,81 @@ func deliveryItemFromDomain(delivery domain.Delivery) deliveryItem {
 		CreatedAt:       delivery.CreatedAt,
 		UpdatedAt:       delivery.UpdatedAt,
 	}
+}
+
+type routeReceiptStatus string
+
+func (routeReceiptStatus) Schema(r huma.Registry) *huma.Schema {
+	return &huma.Schema{
+		Type: "string",
+		Enum: enumValues(domain.KnownReceiptStatusStrings()),
+	}
+}
+
+func receiptItemFromDomain(receipt domain.Receipt) receiptItem {
+	return receiptItem{
+		ID:               receipt.ID,
+		Source:           routeSource(receipt.Source),
+		IntegrationID:    receipt.IntegrationID,
+		SourceDeliveryID: receipt.SourceDeliveryID,
+		SourceEventType:  receipt.SourceEventType,
+		Status:           routeReceiptStatus(receipt.Status),
+		IgnoreReason:     receipt.IgnoreReason,
+		ReceivedAt:       receipt.ReceivedAt,
+		CreatedAt:        receipt.CreatedAt,
+	}
+}
+
+func receiptEventFromDomain(event domain.Event, deliveries []domain.Delivery) receiptEvent {
+	routeMatchCount, routeIDs, destinationIDs := routeSummaryFromFields(event.FieldsJSON)
+	out := receiptEvent{
+		ID:               event.ID,
+		SourceEventID:    event.SourceEventID,
+		Type:             event.Type,
+		Lifecycle:        string(event.Lifecycle),
+		Severity:         string(event.Severity),
+		Title:            event.Title,
+		Summary:          event.Summary,
+		RouteMatchCount:  routeMatchCount,
+		RouteIDs:         routeIDs,
+		DestinationIDs:   destinationIDs,
+		DestinationCount: len(deliveries),
+		Deliveries:       make([]deliveryItem, 0, len(deliveries)),
+	}
+	for _, delivery := range deliveries {
+		out.Deliveries = append(out.Deliveries, deliveryItemFromDomain(delivery))
+	}
+	return out
+}
+
+func routeSummaryFromFields(fieldsJSON []byte) (int, []string, []string) {
+	if len(fieldsJSON) == 0 {
+		return 0, nil, nil
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(fieldsJSON, &fields); err != nil {
+		return 0, nil, nil
+	}
+
+	routeMatchCount := 0
+	if value, ok := fields["route_match_count"].(float64); ok {
+		routeMatchCount = int(value)
+	}
+	routeIDs := stringSliceFromAny(fields["route_ids"])
+	destinationIDs := stringSliceFromAny(fields["destination_ids"])
+	return routeMatchCount, routeIDs, destinationIDs
+}
+
+func stringSliceFromAny(v any) []string {
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if s, ok := item.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }

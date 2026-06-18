@@ -12,19 +12,26 @@ import (
 	"github.com/iweka-dev/webhook-hub/internal/routing"
 )
 
-func TestCreateRouteRejectsBlankSelectorValues(t *testing.T) {
+func TestCreateRouteNormalizesBlankSelectorValues(t *testing.T) {
 	svc := newTestService()
 
-	_, err := svc.CreateRoute(context.Background(), "Bearer admin-secret", domain.Route{
+	route, err := svc.CreateRoute(context.Background(), "Bearer admin-secret", domain.Route{
 		ID:          "watcher-all-events",
 		Description: "Send all Watcher events to Slack",
 		Match: domain.RouteMatchCriteria{
 			Environments: []string{""},
+			Severities:   []domain.Severity{""},
 		},
 		Destinations: []string{"slack-deployments"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "environments") {
-		t.Fatalf("expected environment validation error, got %v", err)
+	if err != nil {
+		t.Fatalf("expected blank selectors to be normalized away, got %v", err)
+	}
+	if len(route.Match.Environments) != 0 {
+		t.Fatalf("expected environments to be normalized away, got %+v", route.Match.Environments)
+	}
+	if len(route.Match.Severities) != 0 {
+		t.Fatalf("expected severities to be normalized away, got %+v", route.Match.Severities)
 	}
 }
 
@@ -85,8 +92,17 @@ func (routeStoreStub) GetRoute(context.Context, string) (domain.Route, error) {
 func (routeStoreStub) CreateRoute(context.Context, domain.Route) error { return nil }
 func (routeStoreStub) UpdateRoute(context.Context, domain.Route) error { return nil }
 func (routeStoreStub) DeleteRoute(context.Context, string) error       { return nil }
+func (routeStoreStub) GetReceipt(context.Context, string) (domain.Receipt, error) {
+	return domain.Receipt{}, context.Canceled
+}
+func (routeStoreStub) ListReceipts(context.Context, domain.ReceiptFilter) (domain.ReceiptPage, error) {
+	return domain.ReceiptPage{}, nil
+}
 func (routeStoreStub) GetDelivery(context.Context, string) (domain.Delivery, error) {
 	return domain.Delivery{}, context.Canceled
+}
+func (routeStoreStub) ListEventsByReceipt(context.Context, string) ([]domain.Event, error) {
+	return nil, nil
 }
 func (routeStoreStub) ListDeliveries(context.Context, domain.DeliveryFilter) (domain.DeliveryPage, error) {
 	return domain.DeliveryPage{}, nil

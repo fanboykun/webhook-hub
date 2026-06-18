@@ -14,7 +14,10 @@ type Store interface {
 	CreateRoute(ctx context.Context, route domain.Route) error
 	UpdateRoute(ctx context.Context, route domain.Route) error
 	DeleteRoute(ctx context.Context, id string) error
+	GetReceipt(ctx context.Context, id string) (domain.Receipt, error)
+	ListReceipts(ctx context.Context, filter domain.ReceiptFilter) (domain.ReceiptPage, error)
 	GetEvent(ctx context.Context, id string) (domain.Event, error)
+	ListEventsByReceipt(ctx context.Context, receiptID string) ([]domain.Event, error)
 	ListDeliveries(ctx context.Context, filter domain.DeliveryFilter) (domain.DeliveryPage, error)
 	GetDelivery(ctx context.Context, id string) (domain.Delivery, error)
 	ClaimDueDeliveries(ctx context.Context, claim domain.ClaimRequest) ([]domain.DeliveryEnvelope, error)

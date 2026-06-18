@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -81,8 +82,16 @@ func (s *Sender) Send(ctx context.Context, destinationID string, message domain.
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return result, nil
 	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	bodyText := strings.TrimSpace(string(body))
 	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+		if bodyText != "" {
+			return result, &Error{Retryable: true, Code: "upstream_retryable", ResponseCode: resp.StatusCode, Err: fmt.Errorf("telegram returned %d: %s", resp.StatusCode, bodyText)}
+		}
 		return result, &Error{Retryable: true, Code: "upstream_retryable", ResponseCode: resp.StatusCode, Err: fmt.Errorf("telegram returned %d", resp.StatusCode)}
+	}
+	if bodyText != "" {
+		return result, &Error{Retryable: false, Code: "upstream_rejected", ResponseCode: resp.StatusCode, Err: fmt.Errorf("telegram returned %d: %s", resp.StatusCode, bodyText)}
 	}
 	return result, &Error{Retryable: false, Code: "upstream_rejected", ResponseCode: resp.StatusCode, Err: fmt.Errorf("telegram returned %d", resp.StatusCode)}
 }

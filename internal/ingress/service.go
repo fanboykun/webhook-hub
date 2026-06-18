@@ -90,9 +90,13 @@ func (s *Service) Handle(ctx context.Context, source domain.Source, req InboundR
 		event.CreatedAt = now
 
 		matches := s.router.Destinations(event)
+		matchedRouteIDs := make([]string, 0, len(matches))
+		matchedDestinationIDs := make([]string, 0, len(matches))
 		deliveries := make([]domain.Delivery, 0, len(matches))
 		for _, match := range matches {
 			destination := s.cfg.Destinations[match.DestinationID]
+			matchedRouteIDs = append(matchedRouteIDs, match.RouteID)
+			matchedDestinationIDs = append(matchedDestinationIDs, match.DestinationID)
 			deliveries = append(deliveries, domain.Delivery{
 				ID:              id.New(now),
 				EventID:         event.ID,
@@ -105,9 +109,33 @@ func (s *Service) Handle(ctx context.Context, source domain.Source, req InboundR
 				UpdatedAt:       now,
 			})
 		}
+		fields := map[string]any{}
+		if len(event.FieldsJSON) > 0 {
+			_ = json.Unmarshal(event.FieldsJSON, &fields)
+		}
+		fields["route_match_count"] = len(matches)
+		fields["route_ids"] = matchedRouteIDs
+		fields["destination_ids"] = matchedDestinationIDs
+		event.FieldsJSON, _ = json.Marshal(fields)
 		totalMatches += len(deliveries)
 		batch.Events = append(batch.Events, event)
 		batch.DeliveryByEvent[event.ID] = deliveries
+
+		eventFields := []any{
+			"source", event.Source,
+			"event_id", event.ID,
+			"event_type", event.Type,
+			"severity", event.Severity,
+			"route_match_count", len(matches),
+			"route_ids", matchedRouteIDs,
+			"destination_ids", matchedDestinationIDs,
+			"delivery_count", len(deliveries),
+		}
+		if len(matches) == 0 && s.logger != nil {
+			s.logger.Info("webhook.route_unmatched", eventFields...)
+		} else if s.logger != nil {
+			s.logger.Info("webhook.route_matched", eventFields...)
+		}
 	}
 
 	if totalMatches == 0 {
@@ -149,10 +177,11 @@ func sanitizedHeaders(source domain.Source, headers http.Header) map[string]stri
 
 	switch source {
 	case domain.SourceWatcher:
+		out["webhook-id"] = headers.Get("webhook-id")
+		out["webhook-timestamp"] = headers.Get("webhook-timestamp")
 		out["X-Watcher-Event"] = headers.Get("X-Watcher-Event")
-		out["X-Watcher-Event-ID"] = headers.Get("X-Watcher-Event-ID")
 		out["X-Watcher-Delivery-ID"] = headers.Get("X-Watcher-Delivery-ID")
-		out["X-Watcher-Timestamp"] = headers.Get("X-Watcher-Timestamp")
+		out["X-Watcher-Event-ID"] = headers.Get("X-Watcher-Event-ID")
 	case domain.SourceGitHub:
 		out["X-GitHub-Event"] = headers.Get("X-GitHub-Event")
 		out["X-GitHub-Delivery"] = headers.Get("X-GitHub-Delivery")

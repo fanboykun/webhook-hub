@@ -20,6 +20,7 @@ var (
 	ErrUnauthorized     = errors.New("admin unauthorized")
 	ErrRouteNotFound    = errors.New("route not found")
 	ErrDeliveryNotFound = errors.New("delivery not found")
+	ErrReceiptNotFound  = errors.New("receipt not found")
 )
 
 type Store interface {
@@ -28,7 +29,10 @@ type Store interface {
 	CreateRoute(ctx context.Context, route domain.Route) error
 	UpdateRoute(ctx context.Context, route domain.Route) error
 	DeleteRoute(ctx context.Context, id string) error
+	GetReceipt(ctx context.Context, id string) (domain.Receipt, error)
+	ListReceipts(ctx context.Context, filter domain.ReceiptFilter) (domain.ReceiptPage, error)
 	GetDelivery(ctx context.Context, id string) (domain.Delivery, error)
+	ListEventsByReceipt(ctx context.Context, receiptID string) ([]domain.Event, error)
 	ListDeliveries(ctx context.Context, filter domain.DeliveryFilter) (domain.DeliveryPage, error)
 	RetryDelivery(ctx context.Context, id string, now time.Time) error
 	Ping(ctx context.Context) error
@@ -81,6 +85,50 @@ func (s *Service) GetDelivery(ctx context.Context, authorization, deliveryID str
 	return delivery, nil
 }
 
+func (s *Service) GetReceipt(ctx context.Context, authorization, receiptID string) (domain.ReceiptDetail, error) {
+	if err := s.authorize(authorization); err != nil {
+		return domain.ReceiptDetail{}, err
+	}
+
+	receipt, err := s.store.GetReceipt(ctx, receiptID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return domain.ReceiptDetail{}, ErrReceiptNotFound
+		}
+		return domain.ReceiptDetail{}, err
+	}
+
+	events, err := s.store.ListEventsByReceipt(ctx, receiptID)
+	if err != nil {
+		return domain.ReceiptDetail{}, err
+	}
+
+	deliveries := make(map[string][]domain.Delivery, len(events))
+	for _, event := range events {
+		page, err := s.store.ListDeliveries(ctx, domain.DeliveryFilter{EventID: event.ID, Limit: 100})
+		if err != nil {
+			return domain.ReceiptDetail{}, err
+		}
+		deliveries[event.ID] = page.Items
+	}
+
+	return domain.ReceiptDetail{
+		Receipt:    receipt,
+		Events:     events,
+		Deliveries: deliveries,
+	}, nil
+}
+
+func (s *Service) ListReceipts(ctx context.Context, authorization string, filter domain.ReceiptFilter) (domain.ReceiptPage, error) {
+	if err := s.authorize(authorization); err != nil {
+		return domain.ReceiptPage{}, err
+	}
+	if filter.Limit <= 0 || filter.Limit > 100 {
+		filter.Limit = 50
+	}
+	return s.store.ListReceipts(ctx, filter)
+}
+
 func (s *Service) ListDeliveries(ctx context.Context, authorization string, filter domain.DeliveryFilter) (domain.DeliveryPage, error) {
 	if err := s.authorize(authorization); err != nil {
 		return domain.DeliveryPage{}, err
@@ -123,6 +171,7 @@ func (s *Service) CreateRoute(ctx context.Context, authorization string, route d
 	if err := s.authorize(authorization); err != nil {
 		return domain.Route{}, err
 	}
+	route = normalizeRoute(route)
 	now := s.clock.Now().UTC()
 	route.CreatedAt = now
 	route.UpdatedAt = now
@@ -142,6 +191,7 @@ func (s *Service) UpdateRoute(ctx context.Context, authorization string, route d
 	if err := s.authorize(authorization); err != nil {
 		return domain.Route{}, err
 	}
+	route = normalizeRoute(route)
 	current, err := s.store.GetRoute(ctx, route.ID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -204,6 +254,51 @@ func (s *Service) validateRoute(route domain.Route) error {
 		return err
 	}
 	return nil
+}
+
+func normalizeRoute(route domain.Route) domain.Route {
+	route.Match.Sources = normalizeSources(route.Match.Sources)
+	route.Match.Types = normalizeStrings(route.Match.Types)
+	route.Match.Severities = normalizeSeverities(route.Match.Severities)
+	route.Match.Environments = normalizeStrings(route.Match.Environments)
+	route.Destinations = normalizeStrings(route.Destinations)
+	return route
+}
+
+func normalizeSources(values []domain.Source) []domain.Source {
+	out := make([]domain.Source, 0, len(values))
+	for _, value := range values {
+		value = domain.Source(strings.TrimSpace(string(value)))
+		if value == "" {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
+func normalizeSeverities(values []domain.Severity) []domain.Severity {
+	out := make([]domain.Severity, 0, len(values))
+	for _, value := range values {
+		value = domain.Severity(strings.TrimSpace(string(value)))
+		if value == "" {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
+func normalizeStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
 }
 
 func validateRouteMatch(match domain.RouteMatchCriteria) error {

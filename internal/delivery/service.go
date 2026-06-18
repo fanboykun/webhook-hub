@@ -41,6 +41,7 @@ func NewService(store storage.Store, cfg config.Config, clk clock.Clock, logger 
 }
 
 func (s *Service) ProcessOnce(ctx context.Context, workerID string) (int, error) {
+	s.logDebug("delivery.poll", "worker_id", workerID, "batch_size", s.cfg.Workers.BatchSize)
 	envelopes, err := s.store.ClaimDueDeliveries(ctx, domain.ClaimRequest{
 		WorkerID:      workerID,
 		BatchSize:     s.cfg.Workers.BatchSize,
@@ -50,9 +51,15 @@ func (s *Service) ProcessOnce(ctx context.Context, workerID string) (int, error)
 	if err != nil {
 		return 0, err
 	}
+	if len(envelopes) == 0 {
+		s.logDebug("delivery.idle", "worker_id", workerID)
+		return 0, nil
+	}
+	s.logInfo("delivery.claimed", "worker_id", workerID, "count", len(envelopes))
 
 	for _, envelope := range envelopes {
 		if err := s.processEnvelope(ctx, workerID, envelope); err != nil {
+			s.logError("delivery.processing_failed", "worker_id", workerID, "delivery_id", envelope.Delivery.ID, "event_id", envelope.Event.ID, "destination_id", envelope.Delivery.DestinationID, "error", err)
 			return 0, err
 		}
 	}
@@ -71,21 +78,28 @@ func (s *Service) processEnvelope(ctx context.Context, workerID string, envelope
 
 	message, err := s.renderMessage(ctx, envelope.Event, destination)
 	if err != nil {
-		return s.store.CompleteAttempt(ctx, domain.AttemptResult{
+		renderErr := err
+		err = s.store.CompleteAttempt(ctx, domain.AttemptResult{
 			DeliveryID:   envelope.Delivery.ID,
 			WorkerID:     workerID,
 			StartedAt:    startedAt,
 			CompletedAt:  s.clock.Now(),
 			Outcome:      "permanent_failure",
 			ErrorCode:    "render_failed",
-			ErrorMessage: err.Error(),
+			ErrorMessage: renderErr.Error(),
 			NextStatus:   domain.DeliveryDeadLetter,
 		})
+		if err != nil {
+			s.logError("delivery.dead_letter_update_failed", "worker_id", workerID, "delivery_id", envelope.Delivery.ID, "event_id", envelope.Event.ID, "destination_id", envelope.Delivery.DestinationID, "error", err)
+			return err
+		}
+		s.logWarn("delivery.dead_lettered", "worker_id", workerID, "delivery_id", envelope.Delivery.ID, "event_id", envelope.Event.ID, "destination_id", envelope.Delivery.DestinationID, "error_code", "render_failed", "error", renderErr.Error())
+		return nil
 	}
 
-	sendResult, err := s.sendMessage(ctx, envelope.Delivery.DestinationID, destination.Type, message)
-	if err == nil {
-		return s.store.CompleteAttempt(ctx, domain.AttemptResult{
+	sendResult, sendErr := s.sendMessage(ctx, envelope.Delivery.DestinationID, destination.Type, message)
+	if sendErr == nil {
+		err = s.store.CompleteAttempt(ctx, domain.AttemptResult{
 			DeliveryID:        envelope.Delivery.ID,
 			WorkerID:          workerID,
 			StartedAt:         startedAt,
@@ -95,6 +109,12 @@ func (s *Service) processEnvelope(ctx context.Context, workerID string, envelope
 			ProviderMessageID: sendResult.ProviderMessageID,
 			NextStatus:        domain.DeliverySent,
 		})
+		if err != nil {
+			s.logError("delivery.sent_update_failed", "worker_id", workerID, "delivery_id", envelope.Delivery.ID, "event_id", envelope.Event.ID, "destination_id", envelope.Delivery.DestinationID, "error", err)
+			return err
+		}
+		s.logInfo("delivery.sent", "worker_id", workerID, "delivery_id", envelope.Delivery.ID, "event_id", envelope.Event.ID, "destination_id", envelope.Delivery.DestinationID, "provider_message_id", sendResult.ProviderMessageID)
+		return nil
 	}
 
 	nextStatus := domain.DeliveryDeadLetter
@@ -103,7 +123,7 @@ func (s *Service) processEnvelope(ctx context.Context, workerID string, envelope
 	var errorCode string
 	var responseCode int
 
-	switch typedErr := err.(type) {
+	switch typedErr := sendErr.(type) {
 	case *slacksender.Error:
 		errorCode = typedErr.Code
 		responseCode = typedErr.ResponseCode
@@ -124,7 +144,7 @@ func (s *Service) processEnvelope(ctx context.Context, workerID string, envelope
 		}
 	}
 
-	return s.store.CompleteAttempt(ctx, domain.AttemptResult{
+	err = s.store.CompleteAttempt(ctx, domain.AttemptResult{
 		DeliveryID:    envelope.Delivery.ID,
 		WorkerID:      workerID,
 		StartedAt:     startedAt,
@@ -132,10 +152,21 @@ func (s *Service) processEnvelope(ctx context.Context, workerID string, envelope
 		Outcome:       outcome,
 		ResponseCode:  responseCode,
 		ErrorCode:     errorCode,
-		ErrorMessage:  err.Error(),
+		ErrorMessage:  sendErr.Error(),
 		NextStatus:    nextStatus,
 		NextAttemptAt: nextAttempt,
 	})
+	if err != nil {
+		s.logError("delivery.failure_update_failed", "worker_id", workerID, "delivery_id", envelope.Delivery.ID, "event_id", envelope.Event.ID, "destination_id", envelope.Delivery.DestinationID, "error", err)
+		return err
+	}
+	switch nextStatus {
+	case domain.DeliveryRetryWait:
+		s.logWarn("delivery.retry_scheduled", "worker_id", workerID, "delivery_id", envelope.Delivery.ID, "event_id", envelope.Event.ID, "destination_id", envelope.Delivery.DestinationID, "error_code", errorCode, "response_code", responseCode, "error", sendErr.Error())
+	default:
+		s.logWarn("delivery.dead_lettered", "worker_id", workerID, "delivery_id", envelope.Delivery.ID, "event_id", envelope.Event.ID, "destination_id", envelope.Delivery.DestinationID, "error_code", errorCode, "response_code", responseCode, "error", sendErr.Error())
+	}
+	return nil
 }
 
 func (s *Service) renderMessage(ctx context.Context, event domain.Event, destination domain.Destination) (domain.RenderedMessage, error) {
@@ -164,4 +195,28 @@ type slogError string
 
 func (e slogError) Error() string {
 	return string(e)
+}
+
+func (s *Service) logDebug(msg string, attrs ...any) {
+	if s.logger != nil {
+		s.logger.Debug(msg, attrs...)
+	}
+}
+
+func (s *Service) logInfo(msg string, attrs ...any) {
+	if s.logger != nil {
+		s.logger.Info(msg, attrs...)
+	}
+}
+
+func (s *Service) logWarn(msg string, attrs ...any) {
+	if s.logger != nil {
+		s.logger.Warn(msg, attrs...)
+	}
+}
+
+func (s *Service) logError(msg string, attrs ...any) {
+	if s.logger != nil {
+		s.logger.Error(msg, attrs...)
+	}
 }

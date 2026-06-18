@@ -18,6 +18,10 @@ func NewRunner(service *Service) *Runner {
 
 func (r *Runner) Start(ctx context.Context, workerID string) {
 	r.wg.Add(2)
+	if r.service.logger != nil {
+		r.service.logger.Info("delivery.scheduler_started", "worker_id", workerID)
+		r.service.logger.Info("delivery.recovery_started", "worker_id", workerID)
+	}
 	go func() {
 		defer r.wg.Done()
 		r.runScheduler(ctx, workerID)
@@ -42,7 +46,9 @@ func (r *Runner) runScheduler(ctx context.Context, workerID string) {
 		}
 		_, err := r.service.ProcessOnce(ctx, workerID)
 		if err != nil && !errors.Is(err, context.Canceled) {
-			r.service.logger.Error("delivery.scheduler_failed", "error", err)
+			if r.service.logger != nil {
+				r.service.logger.Error("delivery.scheduler_failed", "error", err)
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -63,11 +69,15 @@ func (r *Runner) runRecovery(ctx context.Context) {
 		case <-ticker.C:
 			recovered, err := r.service.store.RecoverExpiredLeases(ctx, r.service.clock.Now())
 			if err != nil && !errors.Is(err, context.Canceled) {
-				r.service.logger.Error("delivery.recovery_failed", "error", err)
+				if r.service.logger != nil {
+					r.service.logger.Error("delivery.recovery_failed", "error", err)
+				}
 				continue
 			}
 			if recovered > 0 {
-				r.service.logger.Info("delivery.lease_recovered", "count", recovered)
+				if r.service.logger != nil {
+					r.service.logger.Info("delivery.lease_recovered", "count", recovered)
+				}
 			}
 		}
 	}

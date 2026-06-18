@@ -161,6 +161,9 @@ func (c *Config) resolveSecrets() error {
 		if value == "" {
 			continue
 		}
+		if integration.Source == domain.SourceWatcher && !strings.HasPrefix(value, "whsec_") {
+			return fmt.Errorf("integration %q secret must start with whsec_", id)
+		}
 		integration.ResolvedSecret = value
 		c.Integrations[id] = integration
 	}
@@ -235,6 +238,8 @@ func (c Config) Validate() error {
 			}
 			if strings.TrimSpace(destination.ChatID) == "" {
 				errs = append(errs, fmt.Errorf("destination %q chat_id is required", id))
+			} else if !isTelegramChatID(destination.ChatID) {
+				errs = append(errs, fmt.Errorf("destination %q chat_id %q is invalid", id, destination.ChatID))
 			}
 		default:
 			errs = append(errs, fmt.Errorf("destination %q type %q is not yet supported in this slice", id, destination.Type))
@@ -260,4 +265,35 @@ func resolveSecretValue(ref string) (string, string, error) {
 	}
 
 	return value, ref, nil
+}
+
+func isTelegramChatID(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	if strings.HasPrefix(value, "@") {
+		remainder := strings.TrimPrefix(value, "@")
+		if len(remainder) < 5 || len(remainder) > 32 {
+			return false
+		}
+		for _, r := range remainder {
+			if !(r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+				return false
+			}
+		}
+		return true
+	}
+	if strings.HasPrefix(value, "-") {
+		value = strings.TrimPrefix(value, "-")
+	}
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

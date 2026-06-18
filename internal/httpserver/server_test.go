@@ -5,11 +5,14 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,28 +42,36 @@ func TestWatcherWebhookAccepted(t *testing.T) {
 	server := newTestServer(t, cfg, store, nil)
 
 	body := map[string]any{
-		"schema_version": 1,
-		"id":             "deploy_01",
-		"event":          "deployment.failed",
+		"schema_version": "v1",
+		"event_id":       "deploy_01",
+		"event_type":     "watcher.deployment_failed",
 		"occurred_at":    "2026-06-18T08:42:10Z",
-		"service":        "auth-service",
-		"environment":    "production",
-		"version":        "v2.4.1",
-		"commit_sha":     "abc123",
-		"actor":          "joyy",
-		"url":            "https://watcher.example/deployments/deploy_01",
-		"error":          map[string]any{"message": "Health check failed", "stage": "verify"},
-		"labels":         map[string]string{"team": "platform"},
+		"watcher":        map[string]any{"id": 12, "name": "api-prod"},
+		"attempt": map[string]any{
+			"id":                302,
+			"kind":              "deploy",
+			"reason":            "new_version_found",
+			"status":            "failed",
+			"triggered_by":      "agent",
+			"target_version":    "v1.4.3",
+			"from_version":      "v1.4.2",
+			"failure_phase":     "health_check",
+			"error":             "health check returned 503",
+			"parent_attempt_id": nil,
+			"root_attempt_id":   302,
+		},
+		"summary": "Deployment of api-prod to v1.4.3 failed during health_check",
 	}
 	rawBody, _ := json.Marshal(body)
-	ts := time.Now().UTC().Format(time.RFC3339)
-	signature := watcherSignature("secret", ts, rawBody)
+	ts := time.Now().UTC().Unix()
+	signature := watcherSignature("secret", "deploy_01", ts, rawBody)
 
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/v1/watcher/watcher-production", bytes.NewReader(rawBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Watcher-Event-ID", "deploy_01:deployment.failed")
-	req.Header.Set("X-Watcher-Timestamp", ts)
-	req.Header.Set("X-Watcher-Signature", signature)
+	req.Header.Set("webhook-id", "deploy_01")
+	req.Header.Set("webhook-timestamp", strconv.FormatInt(ts, 10))
+	req.Header.Set("webhook-signature", signature)
+	req.Header.Set("X-Watcher-Event", "watcher.deployment_failed")
 
 	rec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)
@@ -84,26 +95,33 @@ func TestWatcherWebhookUnauthorized(t *testing.T) {
 	server := newTestServer(t, cfg, store, nil)
 
 	body := map[string]any{
-		"schema_version": 1,
-		"id":             "deploy_01",
-		"event":          "deployment.failed",
+		"schema_version": "v1",
+		"event_id":       "deploy_01",
+		"event_type":     "watcher.deployment_failed",
 		"occurred_at":    "2026-06-18T08:42:10Z",
-		"service":        "auth-service",
-		"environment":    "production",
-		"version":        "v2.4.1",
-		"commit_sha":     "abc123",
-		"actor":          "joyy",
-		"url":            "https://watcher.example/deployments/deploy_01",
-		"error":          map[string]any{"message": "Health check failed", "stage": "verify"},
-		"labels":         map[string]string{"team": "platform"},
+		"watcher":        map[string]any{"id": 12, "name": "api-prod"},
+		"attempt": map[string]any{
+			"id":                302,
+			"kind":              "deploy",
+			"reason":            "new_version_found",
+			"status":            "failed",
+			"triggered_by":      "agent",
+			"target_version":    "v1.4.3",
+			"from_version":      "v1.4.2",
+			"failure_phase":     "health_check",
+			"error":             "health check returned 503",
+			"parent_attempt_id": nil,
+			"root_attempt_id":   302,
+		},
+		"summary": "Deployment of api-prod to v1.4.3 failed during health_check",
 	}
 	rawBody, _ := json.Marshal(body)
 
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/v1/watcher/watcher-production", bytes.NewReader(rawBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Watcher-Event-ID", "deploy_01:deployment.failed")
-	req.Header.Set("X-Watcher-Timestamp", time.Now().UTC().Format(time.RFC3339))
-	req.Header.Set("X-Watcher-Signature", "bad")
+	req.Header.Set("webhook-id", "deploy_01")
+	req.Header.Set("webhook-timestamp", strconv.FormatInt(time.Now().UTC().Unix(), 10))
+	req.Header.Set("webhook-signature", "bad")
 
 	rec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)
@@ -189,6 +207,12 @@ func TestOpenAPIIncludesWatcherWebhook(t *testing.T) {
 	if !bytes.Contains(body, []byte("/api/v1/deliveries/{delivery_id}")) {
 		t.Fatalf("openapi missing delivery detail path: %s", string(body))
 	}
+	if !bytes.Contains(body, []byte("/api/v1/receipts/{receipt_id}")) {
+		t.Fatalf("openapi missing receipt detail path: %s", string(body))
+	}
+	if !bytes.Contains(body, []byte("/api/v1/receipts")) {
+		t.Fatalf("openapi missing receipt list path: %s", string(body))
+	}
 	if !bytes.Contains(body, []byte(`"bearerAuth"`)) {
 		t.Fatalf("openapi missing bearer auth scheme: %s", string(body))
 	}
@@ -254,6 +278,114 @@ func TestDeliveryDetailAuthorized(t *testing.T) {
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte(`"id":"d1"`)) {
 		t.Fatalf("unexpected response body: %s", rec.Body.String())
+	}
+}
+
+func TestReceiptDetailAuthorizedShowsUnroutedStatus(t *testing.T) {
+	t.Setenv("WATCHER_WEBHOOK_SECRET", "secret")
+	t.Setenv("SLACK_DEPLOYMENTS_WEBHOOK_URL", "https://example.invalid")
+	t.Setenv("GATEWAY_ADMIN_TOKEN", "admin-secret")
+	cfg := testConfig(t)
+
+	store, err := sqlite.Open(cfg.Database, observability.NewLogger(cfg.Logging))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	now := time.Now().UTC()
+	if _, err := store.Ingest(context.Background(), domain.IngestBatch{
+		Receipt: domain.Receipt{
+			ID:               "r-unrouted",
+			Source:           domain.SourceWatcher,
+			IntegrationID:    "watcher-production",
+			SourceDeliveryID: "deploy_01",
+			SourceEventType:  "watcher.deployment.failed",
+			PayloadSHA256:    "abc",
+			ReceivedAt:       now,
+			Status:           domain.ReceiptUnrouted,
+			CreatedAt:        now,
+		},
+		Events: []domain.Event{
+			{
+				ID:            "e-unrouted",
+				ReceiptID:     "r-unrouted",
+				Source:        domain.SourceWatcher,
+				IntegrationID: "watcher-production",
+				Type:          "watcher.deployment.failed",
+				Severity:      domain.SeverityError,
+				Title:         "deployment failed",
+				Summary:       "health check failed",
+				OccurredAt:    now,
+				CreatedAt:     now,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("seed unrouted receipt: %v", err)
+	}
+
+	server := newTestServer(t, cfg, store, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/receipts/r-unrouted", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"unrouted"`)) {
+		t.Fatalf("receipt status missing from response: %s", rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"delivery_count":0`)) {
+		t.Fatalf("expected no deliveries in response: %s", rec.Body.String())
+	}
+}
+
+func TestListReceiptsAuthorizedFiltersUnrouted(t *testing.T) {
+	t.Setenv("WATCHER_WEBHOOK_SECRET", "secret")
+	t.Setenv("SLACK_DEPLOYMENTS_WEBHOOK_URL", "https://example.invalid")
+	t.Setenv("GATEWAY_ADMIN_TOKEN", "admin-secret")
+	cfg := testConfig(t)
+
+	store, err := sqlite.Open(cfg.Database, observability.NewLogger(cfg.Logging))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	now := time.Now().UTC()
+	if _, err := store.Ingest(context.Background(), domain.IngestBatch{
+		Receipt: domain.Receipt{
+			ID:               "r-list-1",
+			Source:           domain.SourceWatcher,
+			IntegrationID:    "watcher-production",
+			SourceDeliveryID: "deploy_01",
+			SourceEventType:  "watcher.deployment.failed",
+			PayloadSHA256:    "abc",
+			ReceivedAt:       now,
+			Status:           domain.ReceiptUnrouted,
+			CreatedAt:        now,
+		},
+	}); err != nil {
+		t.Fatalf("seed unrouted receipt: %v", err)
+	}
+
+	server := newTestServer(t, cfg, store, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/receipts?status=unrouted&source=watcher&integration_id=watcher-production&limit=10", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"id":"r-list-1"`)) {
+		t.Fatalf("expected receipt in list response: %s", rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"unrouted"`)) {
+		t.Fatalf("expected unrouted status in list response: %s", rec.Body.String())
 	}
 }
 
@@ -434,12 +566,28 @@ func TestRoutesListAndReplaceAuthorized(t *testing.T) {
 	}
 }
 
-func watcherSignature(secret, timestamp string, body []byte) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(timestamp))
-	mac.Write([]byte(":"))
+func watcherSignature(secret, webhookID string, timestamp int64, body []byte) string {
+	signingKey := watcherSigningKey(secret)
+	if len(signingKey) == 0 {
+		signingKey = []byte(secret)
+	}
+	mac := hmac.New(sha256.New, signingKey)
+	mac.Write([]byte(webhookID))
+	mac.Write([]byte("."))
+	mac.Write([]byte(strconv.FormatInt(timestamp, 10)))
+	mac.Write([]byte("."))
 	mac.Write(body)
-	return hex.EncodeToString(mac.Sum(nil))
+	return "v1," + base64.StdEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func watcherSigningKey(secret string) []byte {
+	secret = strings.TrimSpace(secret)
+	if strings.HasPrefix(secret, "whsec_") {
+		if decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(secret, "whsec_")); err == nil {
+			return decoded
+		}
+	}
+	return nil
 }
 
 func githubSignature(secret string, body []byte) string {
@@ -494,7 +642,7 @@ func testConfig(t *testing.T) config.Config {
 			"watcher-production": {
 				Source:         "watcher",
 				SecretEnv:      "WATCHER_WEBHOOK_SECRET",
-				ResolvedSecret: "secret",
+				ResolvedSecret: "whsec_c2VjcmV0",
 				ReplayWindow:   5 * time.Minute,
 			},
 			"github-main": {

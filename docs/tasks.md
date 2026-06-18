@@ -229,6 +229,28 @@ These items should be handled within the relevant phase, not as a separate late 
 - [ ] Maintain OpenAPI documentation accuracy as endpoints are added.
 - [ ] Add fixture coverage for each supported source family.
 
+## Renderer Configurability Backlog
+
+Status: `todo`
+
+Goal: make render output configurable per known source and known event type without turning the renderer into an unsafe free-form template engine.
+
+Plan:
+
+- [ ] Define a small placeholder syntax with an explicit variable marker for allowed fields only.
+- [ ] Support source-level defaults and event-level overrides for renderer profiles.
+- [ ] Keep the placeholder vocabulary constrained to known domain values and normalized event fields.
+- [ ] Validate templates at startup against known sources, known event types, and allowed output targets.
+- [ ] Keep escaping rules destination-specific so Slack, Telegram, and email stay safe by default.
+- [ ] Add golden tests for a few source/event combinations before broadening the placeholder set.
+
+Suggested shape:
+
+- [ ] `source`-scoped renderer config for Watcher, GitHub, Grafana, and Sentry.
+- [ ] `event_type`-scoped overrides for high-signal variants like `watcher.deployment.failed` or `github.workflow.failed`.
+- [ ] Destination-specific render profiles that can reuse the same variable names but produce different output formats.
+- [ ] Explicit fallback behavior when a placeholder is missing or a template is invalid.
+
 ## Recommended First Build Slice
 
 Start here unless the user explicitly reprioritizes:

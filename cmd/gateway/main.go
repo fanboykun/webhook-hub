@@ -28,6 +28,8 @@ func main() {
 	}
 
 	logger := observability.NewLogger(cfg.Logging)
+	apiLogger := logger.With("component", "api")
+	workerLogger := logger.With("component", "worker")
 	store, err := sqlite.Open(cfg.Database, logger)
 	if err != nil {
 		logger.Error("database.open_failed", "error", err)
@@ -46,9 +48,9 @@ func main() {
 		),
 		routeEngine,
 		clock.Real{},
-		logger,
+		apiLogger,
 	)
-	deliveryService := delivery.NewService(store, cfg, clock.Real{}, logger)
+	deliveryService := delivery.NewService(store, cfg, clock.Real{}, workerLogger)
 	deliveryRunner := delivery.NewRunner(deliveryService)
 	appService := app.NewService(cfg, clock.Real{}, store, ingressService, routeEngine)
 	if err := appService.LoadRoutes(context.Background()); err != nil {
@@ -56,7 +58,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	server := httpserver.New(cfg, appService, logger)
+	server := httpserver.New(cfg, appService, apiLogger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -69,9 +71,9 @@ func main() {
 	}()
 	deliveryRunner.Start(ctx, "worker-1")
 
-	logger.Info("server.started", "address", cfg.Server.Address)
+	apiLogger.Info("server.started", "address", cfg.Server.Address)
 	if err := server.Run(); err != nil {
-		logger.Error("server.stopped", "error", err)
+		apiLogger.Error("server.stopped", "error", err)
 	}
 	deliveryRunner.Wait()
 }

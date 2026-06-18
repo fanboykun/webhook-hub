@@ -96,6 +96,23 @@ func toDomainEvent(in eventModel) domain.Event {
 	}
 }
 
+func toDomainReceipt(in receiptModel) domain.Receipt {
+	return domain.Receipt{
+		ID:               in.ID,
+		Source:           domain.Source(in.Source),
+		IntegrationID:    in.IntegrationID,
+		SourceDeliveryID: in.SourceDeliveryID,
+		SourceEventType:  in.SourceEventType,
+		PayloadSHA256:    in.PayloadSHA256,
+		RawPayload:       in.RawPayload,
+		HeadersJSON:      in.HeadersJSON,
+		ReceivedAt:       in.ReceivedAt,
+		Status:           domain.ReceiptStatus(in.Status),
+		IgnoreReason:     in.IgnoreReason,
+		CreatedAt:        in.CreatedAt,
+	}
+}
+
 func toDomainDelivery(in deliveryModel) domain.Delivery {
 	return domain.Delivery{
 		ID:                in.ID,

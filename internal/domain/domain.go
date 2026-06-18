@@ -16,6 +16,7 @@ type Lifecycle string
 const (
 	LifecycleStarted    Lifecycle = "started"
 	LifecycleTriggered  Lifecycle = "triggered"
+	LifecycleUpdated    Lifecycle = "updated"
 	LifecycleSucceeded  Lifecycle = "succeeded"
 	LifecycleFailed     Lifecycle = "failed"
 	LifecycleResolved   Lifecycle = "resolved"
@@ -169,6 +170,27 @@ type IngestResult struct {
 	Status        ReceiptStatus
 }
 
+type ReceiptDetail struct {
+	Receipt    Receipt
+	Events     []Event
+	Deliveries map[string][]Delivery
+}
+
+type ReceiptFilter struct {
+	Status        ReceiptStatus
+	Source        Source
+	IntegrationID string
+	From          *time.Time
+	To            *time.Time
+	Limit         int
+	Cursor        string
+}
+
+type ReceiptPage struct {
+	Items      []Receipt
+	NextCursor string
+}
+
 type ClaimRequest struct {
 	WorkerID      string
 	BatchSize     int
@@ -222,11 +244,20 @@ type AttemptResult struct {
 }
 
 var KnownEventTypes = []string{
+	// watcher events
+	"watcher.version.found",
 	"watcher.deployment.started",
 	"watcher.deployment.succeeded",
 	"watcher.deployment.failed",
 	"watcher.deployment.cancelled",
 	"watcher.deployment.rolled_back",
+	"watcher.rollback.succeeded",
+	"watcher.rollback.failed",
+	"watcher.webhook.test",
+	"webhook.delivery.exhausted",
+	"service.health.changed",
+
+	// github events
 	"github.pull_request.opened",
 	"github.pull_request.merged",
 	"github.pull_request.closed",
@@ -251,6 +282,13 @@ var KnownSeverities = []Severity{
 	SeverityCritical,
 }
 
+var KnownReceiptStatuses = []ReceiptStatus{
+	ReceiptAccepted,
+	ReceiptIgnored,
+	ReceiptDuplicate,
+	ReceiptUnrouted,
+}
+
 func KnownSourceStrings() []string {
 	values := make([]string, 0, len(KnownSources))
 	for _, value := range KnownSources {
@@ -271,6 +309,14 @@ func IsKnownSource(value Source) bool {
 func KnownSeverityStrings() []string {
 	values := make([]string, 0, len(KnownSeverities))
 	for _, value := range KnownSeverities {
+		values = append(values, string(value))
+	}
+	return values
+}
+
+func KnownReceiptStatusStrings() []string {
+	values := make([]string, 0, len(KnownReceiptStatuses))
+	for _, value := range KnownReceiptStatuses {
 		values = append(values, string(value))
 	}
 	return values

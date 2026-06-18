@@ -42,7 +42,42 @@ When delivering an event, Watcher sends an HTTP request with the following detai
   - `X-Watcher-Event`: The type of event being delivered (e.g. `watcher.deployment_succeeded`).
   - `X-Watcher-Delivery-ID`: A unique string identifying this specific delivery attempt (e.g. `dlv_01j0deployok_1`).
 
-### 2.1 Shared Envelope Contract
+### 2.1 Signing Secret Format
+
+Watcher uses a Standard Webhooks HMAC signing secret. The value should look like:
+
+```text
+whsec_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd
+```
+
+What that means:
+
+- `whsec_` is the required prefix.
+- The part after the prefix is a base64-encoded random secret.
+- The secret itself should be high entropy and unpredictable.
+- It is not a password, token, or user-visible label.
+- There is no semantic naming pattern beyond the `whsec_...` format.
+
+How to get one:
+
+- Generate a new secret with a secure random generator.
+- Copy the exact same value into Watcher and into your receiver configuration.
+- Keep it in your secret manager, not in source control.
+
+How Watcher uses it:
+
+- Watcher reads the configured `whsec_...` value from the global default or watcher override.
+- It decodes the secret and uses it to sign the exact raw request body.
+- It places the signature in `webhook-signature` and sends the matching `webhook-id` and `webhook-timestamp` headers.
+
+How your receiver should use it:
+
+- Read the exact raw request body bytes.
+- Recompute the HMAC using the same `whsec_...` value.
+- Verify the `webhook-id`, `webhook-timestamp`, and `webhook-signature` headers before trusting the payload.
+- Reject the request if the secret differs, the body changed, or the timestamp is outside your tolerance window.
+
+### 2.2 Shared Envelope Contract
 
 Every webhook event includes the same top-level envelope before any event-specific nested object such as `version`, `attempt`, `service`, or `health`. Watcher now includes both the Standard Webhooks fields and its legacy convenience fields for easier migration.
 

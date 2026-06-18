@@ -372,9 +372,11 @@ For the internally controlled Watcher payload, Huma may use both a typed `Body` 
 ```go
 type WatcherWebhookInput struct {
     IntegrationID string `path:"integration_id"`
-    EventID       string `header:"X-Watcher-Event-ID"`
-    Timestamp     string `header:"X-Watcher-Timestamp"`
-    Signature     string `header:"X-Watcher-Signature"`
+    WebhookID     string `header:"webhook-id"`
+    Timestamp     string `header:"webhook-timestamp"`
+    Signature     string `header:"webhook-signature"`
+    Event         string `header:"X-Watcher-Event"`
+    DeliveryID    string `header:"X-Watcher-Delivery-ID"`
     Body          WatcherPayload
     RawBody       []byte
 }
@@ -406,15 +408,17 @@ Every webhook endpoint must apply:
 Recommended headers:
 
 ```text
-X-Watcher-Event-ID
-X-Watcher-Timestamp
-X-Watcher-Signature
+webhook-id
+webhook-timestamp
+webhook-signature
+X-Watcher-Event
+X-Watcher-Delivery-ID
 ```
 
 Signature input:
 
 ```text
-HMAC-SHA256(secret, timestamp + ":" + raw_body)
+HMAC-SHA256(secret, webhook-id + "." + webhook-timestamp + "." + raw_body)
 ```
 
 Reject timestamps outside the configured replay window, recommended default: five minutes.
@@ -547,36 +551,45 @@ Because Watcher is controlled internally, define and version its webhook contrac
 Recommended event types:
 
 ```text
-deployment.started
-deployment.succeeded
-deployment.failed
-deployment.cancelled
-deployment.rolled_back
+watcher.version.found
+watcher.deployment.started
+watcher.deployment.succeeded
+watcher.deployment.failed
+watcher.deployment.cancelled
+watcher.deployment.rolled_back
+watcher.rollback.succeeded
+watcher.rollback.failed
+watcher.webhook.test
+service.health.changed
+webhook.delivery.exhausted
 ```
 
 Recommended payload:
 
 ```json
 {
-  "schema_version": 1,
-  "id": "deploy_01J...",
-  "event": "deployment.failed",
+  "schema_version": "v1",
+  "event_id": "evt_01J...",
+  "event_type": "watcher.deployment_failed",
   "occurred_at": "2026-06-18T08:42:10Z",
-  "service": "auth-service",
-  "environment": "production",
-  "version": "v2.4.1",
-  "commit_sha": "a81f57...",
-  "actor": "joyy",
-  "duration_ms": 84321,
-  "url": "https://watcher.example/deployments/deploy_01J...",
-  "error": {
-    "message": "Health check failed",
-    "stage": "verify"
+  "watcher": {
+    "id": 12,
+    "name": "api-prod"
   },
-  "labels": {
-    "team": "platform",
-    "region": "ap-southeast-1"
-  }
+  "attempt": {
+    "id": 302,
+    "kind": "deploy",
+    "reason": "new_version_found",
+    "status": "failed",
+    "triggered_by": "agent",
+    "target_version": "v2.4.1",
+    "from_version": "v2.4.0",
+    "failure_phase": "health_check",
+    "error": "health check returned 503",
+    "parent_attempt_id": null,
+    "root_attempt_id": 302
+  },
+  "summary": "Deployment of api-prod to v2.4.1 failed during health_check"
 }
 ```
 
@@ -2216,7 +2229,7 @@ Version 1 is complete when:
 Implement the smallest durable vertical slice:
 
 ```text
-signed Watcher deployment.failed webhook
+signed Watcher deployment_failed webhook
     ↓
 Huma RawBody verification
     ↓

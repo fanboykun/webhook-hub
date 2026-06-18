@@ -5,8 +5,9 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -70,24 +71,27 @@ func TestHandleUnroutedWatcherWebhookDoesNotCreateDeliveries(t *testing.T) {
 	service := NewService(store, cfg, NewRegistry(fakeWatcherAdapter{}), routing.New(nil), clock.Real{}, observability.NewLogger(cfg.Logging))
 
 	now := time.Now().UTC()
-	body := []byte(`{"schema_version":1,"id":"deploy_01","event":"deployment.failed","occurred_at":"2026-06-18T08:42:10Z","service":"auth-service","environment":"production","version":"v2.4.1","commit_sha":"abc123","actor":"joyy","url":"https://watcher.example/deployments/deploy_01","error":{"message":"Health check failed","stage":"verify"},"labels":{"team":"platform"}}`)
-	ts := now.Format(time.RFC3339)
+	body := []byte(`{"schema_version":"v1","event_id":"deploy_01","event_type":"watcher.deployment_failed","occurred_at":"2026-06-18T08:42:10Z","watcher":{"id":12,"name":"api-prod"},"attempt":{"id":302,"kind":"deploy","reason":"new_version_found","status":"failed","triggered_by":"agent","target_version":"v1.4.3","from_version":"v1.4.2","failed_target_version":"","failure_phase":"health_check","error":"health check returned 503","parent_attempt_id":null,"root_attempt_id":302},"summary":"Deployment of api-prod to v1.4.3 failed during health_check"}`)
+	ts := now.Unix()
 
 	mac := hmac.New(sha256.New, []byte("secret"))
-	mac.Write([]byte(ts))
-	mac.Write([]byte(":"))
+	mac.Write([]byte("deploy_01"))
+	mac.Write([]byte("."))
+	mac.Write([]byte(strconv.FormatInt(ts, 10)))
+	mac.Write([]byte("."))
 	mac.Write(body)
-	signature := hex.EncodeToString(mac.Sum(nil))
+	signature := "v1," + base64.StdEncoding.EncodeToString(mac.Sum(nil))
+
+	headers := http.Header{}
+	headers.Set("webhook-id", "deploy_01")
+	headers.Set("webhook-timestamp", strconv.FormatInt(ts, 10))
+	headers.Set("webhook-signature", signature)
 
 	result, err := service.Handle(context.Background(), domain.SourceWatcher, InboundRequest{
 		IntegrationID: "watcher-production",
-		Headers: http.Header{
-			"X-Watcher-Event-ID":  []string{"deploy_01:deployment.failed"},
-			"X-Watcher-Timestamp": []string{ts},
-			"X-Watcher-Signature": []string{signature},
-		},
-		RawBody:    bytes.Clone(body),
-		ReceivedAt: now,
+		Headers:       headers,
+		RawBody:       bytes.Clone(body),
+		ReceivedAt:    now,
 	})
 	if err != nil {
 		t.Fatalf("handle failed: %v", err)
@@ -129,11 +133,13 @@ func (fakeWatcherAdapter) Source() domain.Source {
 
 func (fakeWatcherAdapter) Verify(_ context.Context, integration config.IntegrationConfig, req InboundRequest) error {
 	mac := hmac.New(sha256.New, []byte(integration.ResolvedSecret))
-	mac.Write([]byte(req.Headers.Get("X-Watcher-Timestamp")))
-	mac.Write([]byte(":"))
+	mac.Write([]byte(req.Headers.Get("webhook-id")))
+	mac.Write([]byte("."))
+	mac.Write([]byte(req.Headers.Get("webhook-timestamp")))
+	mac.Write([]byte("."))
 	mac.Write(req.RawBody)
-	expected := hex.EncodeToString(mac.Sum(nil))
-	if expected != req.Headers.Get("X-Watcher-Signature") {
+	expected := "v1," + base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	if expected != req.Headers.Get("webhook-signature") {
 		return ErrUnauthorized
 	}
 	return nil
@@ -144,15 +150,15 @@ func (fakeWatcherAdapter) Normalize(_ context.Context, integrationID string, _ c
 		Source:        domain.SourceWatcher,
 		IntegrationID: integrationID,
 		Type:          "watcher.deployment.failed",
-		Action:        "deployment.failed",
+		Action:        "failed",
 		Lifecycle:     domain.LifecycleFailed,
 		Severity:      domain.SeverityError,
 		Title:         "deployment failed",
 		OccurredAt:    req.ReceivedAt,
 	}
 	return AdapterResult{
-		SourceDeliveryID: req.Headers.Get("X-Watcher-Event-ID"),
-		SourceEventType:  "deployment.failed",
+		SourceDeliveryID: req.Headers.Get("webhook-id"),
+		SourceEventType:  "watcher.deployment.failed",
 		Events:           []domain.Event{event},
 	}, nil
 }
