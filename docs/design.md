@@ -2185,7 +2185,7 @@ Chosen to avoid external infrastructure while still surviving restarts and suppo
 
 Chosen because Huma supports raw request bytes. This allows accurate signature verification without sacrificing OpenAPI documentation.
 
-### ADR-004: Startup-defined integrations plus persisted live routes
+### ADR-004: Startup-defined integrations plus persisted live routes (SUPERCEDED BY ADR-008)
 
 Chosen to keep credentials and transport settings deterministic at process start while still allowing operators to adjust routing without a restart. Integrations and destinations remain config-owned; route policy state is persisted in SQLite and edited through CRUD admin API endpoints.
 
@@ -2200,6 +2200,10 @@ Chosen so multiple independent policies can match one event without causing dupl
 ### ADR-007: At-least-once outbound semantics
 
 Chosen because no atomic transaction spans SQLite and external providers. The system documents the possible crash-window duplicate rather than claiming exactly-once behavior.
+
+### ADR-008: Dynamic Integrations and Destinations with SQLite Encryption
+
+Supercedes ADR-004. Chosen to allow operators to configure webhook integration endpoints (Watcher, GitHub, Grafana, Sentry) and delivery destinations (Slack, Telegram, Email) dynamically via REST API endpoints without restarting the gateway process. Provider secrets, such as Slack webhooks and Telegram bot tokens, are encrypted in SQLite using AES-256-GCM. A master encryption key (`GATEWAY_ENCRYPTION_KEY`) must be supplied at startup. Hot-reloaded in-memory registries cache the configurations to keep webhook ingestion and background delivery performance high and avoid continuous SQLite lookups.
 
 ---
 

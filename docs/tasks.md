@@ -231,25 +231,39 @@ These items should be handled within the relevant phase, not as a separate late 
 
 ## Renderer Configurability Backlog
 
-Status: `todo`
+Status: `tracked_in_github`
+
+PRD: [Issue #1](https://github.com/fanboykun/webhook-hub/issues/1)
 
 Goal: make render output configurable per known source and known event type without turning the renderer into an unsafe free-form template engine.
 
-Plan:
+Implementation issues tracked in GitHub:
+- [ ] Slice 1: Configuration Schema & Slack-only Configurable Renderer [Issue #2](https://github.com/fanboykun/webhook-hub/issues/2)
+- [ ] Slice 2: Telegram Support & Variable Escaping [Issue #3](https://github.com/fanboykun/webhook-hub/issues/3)
+- [ ] Slice 3: Event-Type Overrides & Golden Tests [Issue #4](https://github.com/fanboykun/webhook-hub/issues/4)
 
-- [ ] Define a small placeholder syntax with an explicit variable marker for allowed fields only.
-- [ ] Support source-level defaults and event-level overrides for renderer profiles.
-- [ ] Keep the placeholder vocabulary constrained to known domain values and normalized event fields.
-- [ ] Validate templates at startup against known sources, known event types, and allowed output targets.
-- [ ] Keep escaping rules destination-specific so Slack, Telegram, and email stay safe by default.
-- [ ] Add golden tests for a few source/event combinations before broadening the placeholder set.
+## Dynamic Config Backlog (Integrations & Destinations via API)
 
-Suggested shape:
+Status: `todo`
 
-- [ ] `source`-scoped renderer config for Watcher, GitHub, Grafana, and Sentry.
-- [ ] `event_type`-scoped overrides for high-signal variants like `watcher.deployment.failed` or `github.workflow.failed`.
-- [ ] Destination-specific render profiles that can reuse the same variable names but produce different output formats.
-- [ ] Explicit fallback behavior when a placeholder is missing or a template is invalid.
+Goal: make webhook integrations and delivery destinations dynamically manageable via HTTP API and stored securely in SQLite.
+
+Tasks:
+
+- [ ] Implement AES-256-GCM secret encryption helper in `internal/config/crypto`.
+- [ ] Add SQLite database migrations and GORM models for `integrations` and `destinations`.
+- [ ] Implement configuration seeding from `config.yaml` to SQLite on application startup.
+- [ ] Create thread-safe, hot-reloaded in-memory registries for integrations and destinations.
+- [ ] Refactor Ingress service and Delivery service to resolve configurations from the dynamic registries.
+- [ ] Build Huma REST CRUD API endpoints for `/api/v1/integrations` and `/api/v1/destinations` with proper validation, secret masking (redaction), and update preservation.
+- [ ] Add unit and integration tests covering encryption, seeding, hot-reloading, and API endpoints.
+
+Acceptance criteria:
+
+- [ ] Webhook integrations and delivery destinations can be created, retrieved, updated, and deleted dynamically via the operational API.
+- [ ] Sensitive fields (bot tokens, webhook URLs, SMTP passwords) are stored encrypted in SQLite.
+- [ ] Sensitive fields are redacted as `"[REDACTED]"` in all retrieval API responses.
+- [ ] If `GATEWAY_ENCRYPTION_KEY` is missing or has invalid length (not 32 bytes), the gateway fails to start.
 
 ## Recommended First Build Slice
 
