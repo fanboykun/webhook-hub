@@ -8,8 +8,7 @@ import (
 	"github.com/fanboykun/webhook-hub/internal/clock"
 	"github.com/fanboykun/webhook-hub/internal/config"
 	"github.com/fanboykun/webhook-hub/internal/domain"
-	slackrender "github.com/fanboykun/webhook-hub/internal/message/slack"
-	telegramrender "github.com/fanboykun/webhook-hub/internal/message/telegram"
+	"github.com/fanboykun/webhook-hub/internal/message"
 	sendpkg "github.com/fanboykun/webhook-hub/internal/sender"
 	slacksender "github.com/fanboykun/webhook-hub/internal/sender/slack"
 	telegramsender "github.com/fanboykun/webhook-hub/internal/sender/telegram"
@@ -17,26 +16,28 @@ import (
 )
 
 type Service struct {
-	store            storage.Store
-	cfg              config.Config
-	clock            clock.Clock
-	logger           *slog.Logger
-	slackRenderer    *slackrender.Renderer
-	telegramRenderer *telegramrender.Renderer
-	slackSender      *slacksender.Sender
-	telegramSender   *telegramsender.Sender
+	store          storage.Store
+	cfg            config.Config
+	clock          clock.Clock
+	logger         *slog.Logger
+	renderer       message.Renderer
+	slackSender    *slacksender.Sender
+	telegramSender *telegramsender.Sender
 }
 
 func NewService(store storage.Store, cfg config.Config, clk clock.Clock, logger *slog.Logger) *Service {
+	return NewServiceWithRenderer(store, cfg, clk, logger, message.NewConfigurableRenderer(cfg.RendererProfiles, nil, nil))
+}
+
+func NewServiceWithRenderer(store storage.Store, cfg config.Config, clk clock.Clock, logger *slog.Logger, renderer message.Renderer) *Service {
 	return &Service{
-		store:            store,
-		cfg:              cfg,
-		clock:            clk,
-		logger:           logger,
-		slackRenderer:    slackrender.NewRenderer(),
-		telegramRenderer: telegramrender.NewRenderer(),
-		slackSender:      slacksender.New(cfg.Destinations),
-		telegramSender:   telegramsender.New(cfg.Destinations),
+		store:          store,
+		cfg:            cfg,
+		clock:          clk,
+		logger:         logger,
+		renderer:       renderer,
+		slackSender:    slacksender.New(cfg.Destinations),
+		telegramSender: telegramsender.New(cfg.Destinations),
 	}
 }
 
@@ -170,14 +171,7 @@ func (s *Service) processEnvelope(ctx context.Context, workerID string, envelope
 }
 
 func (s *Service) renderMessage(ctx context.Context, event domain.Event, destination domain.Destination) (domain.RenderedMessage, error) {
-	switch destination.Type {
-	case domain.DestinationSlack:
-		return s.slackRenderer.Render(ctx, event, destination)
-	case domain.DestinationTelegram:
-		return s.telegramRenderer.Render(ctx, event, destination)
-	default:
-		return domain.RenderedMessage{}, slogError("unsupported destination type")
-	}
+	return s.renderer.Render(ctx, event, destination)
 }
 
 func (s *Service) sendMessage(ctx context.Context, destinationID string, destinationType domain.DestinationType, message domain.RenderedMessage) (sendpkg.SendResult, error) {
