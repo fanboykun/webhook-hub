@@ -14,24 +14,36 @@ import (
 	"github.com/fanboykun/webhook-hub/internal/domain"
 	"github.com/fanboykun/webhook-hub/internal/id"
 	"github.com/fanboykun/webhook-hub/internal/routing"
+	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
 	"github.com/fanboykun/webhook-hub/internal/storage"
 )
 
 type Service struct {
-	store    storage.Store
-	cfg      config.Config
-	adapters *Registry
-	router   *routing.Engine
-	clock    clock.Clock
-	logger   *slog.Logger
+	store        storage.Store
+	cfg          config.Config
+	adapters     *Registry
+	router       *routing.Engine
+	clock        clock.Clock
+	logger       *slog.Logger
+	integrations *runtimeconfig.IntegrationRegistry
+	destinations *runtimeconfig.DestinationRegistry
 }
 
-func NewService(store storage.Store, cfg config.Config, adapters *Registry, router *routing.Engine, clk clock.Clock, logger *slog.Logger) *Service {
-	return &Service{store: store, cfg: cfg, adapters: adapters, router: router, clock: clk, logger: logger}
+func NewService(store storage.Store, cfg config.Config, adapters *Registry, router *routing.Engine, integrations *runtimeconfig.IntegrationRegistry, destinations *runtimeconfig.DestinationRegistry, clk clock.Clock, logger *slog.Logger) *Service {
+	return &Service{
+		store:        store,
+		cfg:          cfg,
+		adapters:     adapters,
+		router:       router,
+		clock:        clk,
+		logger:       logger,
+		integrations: integrations,
+		destinations: destinations,
+	}
 }
 
 func (s *Service) Handle(ctx context.Context, source domain.Source, req InboundRequest) (domain.IngestResult, error) {
-	integration, ok := s.cfg.Integrations[req.IntegrationID]
+	integration, ok := s.integrations.Get(req.IntegrationID)
 	if !ok {
 		return domain.IngestResult{}, ErrUnknownIntegration
 	}
@@ -94,7 +106,10 @@ func (s *Service) Handle(ctx context.Context, source domain.Source, req InboundR
 		matchedDestinationIDs := make([]string, 0, len(matches))
 		deliveries := make([]domain.Delivery, 0, len(matches))
 		for _, match := range matches {
-			destination := s.cfg.Destinations[match.DestinationID]
+			destination, ok := s.destinations.Get(match.DestinationID)
+			if !ok {
+				continue
+			}
 			matchedRouteIDs = append(matchedRouteIDs, match.RouteID)
 			matchedDestinationIDs = append(matchedDestinationIDs, match.DestinationID)
 			deliveries = append(deliveries, domain.Delivery{

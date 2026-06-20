@@ -9,6 +9,16 @@ import (
 
 type Store interface {
 	Ingest(ctx context.Context, batch domain.IngestBatch) (domain.IngestResult, error)
+	ListIntegrations(ctx context.Context) ([]domain.ManagedIntegration, error)
+	GetIntegration(ctx context.Context, id string) (domain.ManagedIntegration, error)
+	CreateIntegration(ctx context.Context, integration domain.ManagedIntegration) error
+	UpdateIntegration(ctx context.Context, integration domain.ManagedIntegration) error
+	DeleteIntegration(ctx context.Context, id string) error
+	ListDestinations(ctx context.Context) ([]domain.ManagedDestination, error)
+	GetDestination(ctx context.Context, id string) (domain.ManagedDestination, error)
+	CreateDestination(ctx context.Context, destination domain.ManagedDestination) error
+	UpdateDestination(ctx context.Context, destination domain.ManagedDestination) error
+	DeleteDestination(ctx context.Context, id string) error
 	ListRoutes(ctx context.Context) ([]domain.Route, error)
 	GetRoute(ctx context.Context, id string) (domain.Route, error)
 	CreateRoute(ctx context.Context, route domain.Route) error

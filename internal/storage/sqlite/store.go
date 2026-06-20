@@ -2,16 +2,22 @@ package sqlite
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
+	configcrypto "github.com/fanboykun/webhook-hub/internal/config/crypto"
 	"github.com/fanboykun/webhook-hub/internal/domain"
 	"gorm.io/gorm"
 )
 
 type Store struct {
-	db *gorm.DB
+	db     *gorm.DB
+	cipher *configcrypto.Cipher
 }
+
+var errEncryptionUnavailable = errors.New("dynamic config encryption is not configured")
 
 func (s *Store) Ingest(ctx context.Context, batch domain.IngestBatch) (domain.IngestResult, error) {
 	if err := validateIngestBatch(batch); err != nil {
@@ -62,6 +68,126 @@ func (s *Store) Ingest(ctx context.Context, batch domain.IngestBatch) (domain.In
 		return nil
 	})
 	return result, err
+}
+
+func (s *Store) ListIntegrations(ctx context.Context) ([]domain.ManagedIntegration, error) {
+	if s.cipher == nil {
+		return nil, errEncryptionUnavailable
+	}
+	var models []integrationModel
+	if err := s.db.WithContext(ctx).Order("id ASC").Find(&models).Error; err != nil {
+		return nil, err
+	}
+
+	out := make([]domain.ManagedIntegration, 0, len(models))
+	for _, model := range models {
+		item, err := s.toDomainIntegration(model)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+func (s *Store) GetIntegration(ctx context.Context, id string) (domain.ManagedIntegration, error) {
+	if s.cipher == nil {
+		return domain.ManagedIntegration{}, errEncryptionUnavailable
+	}
+	var model integrationModel
+	if err := s.db.WithContext(ctx).First(&model, "id = ?", id).Error; err != nil {
+		return domain.ManagedIntegration{}, err
+	}
+	return s.toDomainIntegration(model)
+}
+
+func (s *Store) CreateIntegration(ctx context.Context, integration domain.ManagedIntegration) error {
+	model, err := s.toIntegrationModel(integration)
+	if err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Create(&model).Error
+}
+
+func (s *Store) UpdateIntegration(ctx context.Context, integration domain.ManagedIntegration) error {
+	model, err := s.toIntegrationModel(integration)
+	if err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Model(&integrationModel{}).
+		Where("id = ?", integration.ID).
+		Updates(map[string]any{
+			"source":            model.Source,
+			"config_ciphertext": model.ConfigCiphertext,
+			"updated_at":        integration.UpdatedAt,
+		}).Error
+}
+
+func (s *Store) DeleteIntegration(ctx context.Context, id string) error {
+	if s.cipher == nil {
+		return errEncryptionUnavailable
+	}
+	return s.db.WithContext(ctx).Delete(&integrationModel{}, "id = ?", id).Error
+}
+
+func (s *Store) ListDestinations(ctx context.Context) ([]domain.ManagedDestination, error) {
+	if s.cipher == nil {
+		return nil, errEncryptionUnavailable
+	}
+	var models []destinationModel
+	if err := s.db.WithContext(ctx).Order("id ASC").Find(&models).Error; err != nil {
+		return nil, err
+	}
+
+	out := make([]domain.ManagedDestination, 0, len(models))
+	for _, model := range models {
+		item, err := s.toDomainDestination(model)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+func (s *Store) GetDestination(ctx context.Context, id string) (domain.ManagedDestination, error) {
+	if s.cipher == nil {
+		return domain.ManagedDestination{}, errEncryptionUnavailable
+	}
+	var model destinationModel
+	if err := s.db.WithContext(ctx).First(&model, "id = ?", id).Error; err != nil {
+		return domain.ManagedDestination{}, err
+	}
+	return s.toDomainDestination(model)
+}
+
+func (s *Store) CreateDestination(ctx context.Context, destination domain.ManagedDestination) error {
+	model, err := s.toDestinationModel(destination)
+	if err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Create(&model).Error
+}
+
+func (s *Store) UpdateDestination(ctx context.Context, destination domain.ManagedDestination) error {
+	model, err := s.toDestinationModel(destination)
+	if err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Model(&destinationModel{}).
+		Where("id = ?", destination.ID).
+		Updates(map[string]any{
+			"type":              model.Type,
+			"config_ciphertext": model.ConfigCiphertext,
+			"updated_at":        destination.UpdatedAt,
+		}).Error
+}
+
+func (s *Store) DeleteDestination(ctx context.Context, id string) error {
+	if s.cipher == nil {
+		return errEncryptionUnavailable
+	}
+	return s.db.WithContext(ctx).Delete(&destinationModel{}, "id = ?", id).Error
 }
 
 func (s *Store) ListRoutes(ctx context.Context) ([]domain.Route, error) {
@@ -244,6 +370,114 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+type integrationPayload struct {
+	Secret       string        `json:"secret"`
+	ClientSecret string        `json:"client_secret,omitempty"`
+	ReplayWindow time.Duration `json:"replay_window"`
+}
+
+func (s *Store) toIntegrationModel(in domain.ManagedIntegration) (integrationModel, error) {
+	if s.cipher == nil {
+		return integrationModel{}, errEncryptionUnavailable
+	}
+	payload, err := json.Marshal(integrationPayload{
+		Secret:       in.Secret,
+		ClientSecret: in.ClientSecret,
+		ReplayWindow: in.ReplayWindow,
+	})
+	if err != nil {
+		return integrationModel{}, err
+	}
+	ciphertext, err := s.cipher.Encrypt(payload)
+	if err != nil {
+		return integrationModel{}, err
+	}
+	return integrationModel{
+		ID:               in.ID,
+		Source:           string(in.Source),
+		ConfigCiphertext: ciphertext,
+		CreatedAt:        in.CreatedAt,
+		UpdatedAt:        in.UpdatedAt,
+	}, nil
+}
+
+func (s *Store) toDomainIntegration(in integrationModel) (domain.ManagedIntegration, error) {
+	plaintext, err := s.cipher.Decrypt(in.ConfigCiphertext)
+	if err != nil {
+		return domain.ManagedIntegration{}, err
+	}
+	var payload integrationPayload
+	if err := json.Unmarshal(plaintext, &payload); err != nil {
+		return domain.ManagedIntegration{}, err
+	}
+	return domain.ManagedIntegration{
+		ID:           in.ID,
+		Source:       domain.Source(in.Source),
+		Secret:       payload.Secret,
+		ClientSecret: payload.ClientSecret,
+		ReplayWindow: payload.ReplayWindow,
+		CreatedAt:    in.CreatedAt,
+		UpdatedAt:    in.UpdatedAt,
+	}, nil
+}
+
+type destinationPayload struct {
+	WebhookURL string `json:"webhook_url,omitempty"`
+	BotToken   string `json:"bot_token,omitempty"`
+	ChatID     string `json:"chat_id,omitempty"`
+	APIBaseURL string `json:"api_base_url,omitempty"`
+	Profile    string `json:"profile,omitempty"`
+}
+
+func (s *Store) toDestinationModel(in domain.ManagedDestination) (destinationModel, error) {
+	if s.cipher == nil {
+		return destinationModel{}, errEncryptionUnavailable
+	}
+	payload, err := json.Marshal(destinationPayload{
+		WebhookURL: in.WebhookURL,
+		BotToken:   in.BotToken,
+		ChatID:     in.ChatID,
+		APIBaseURL: in.APIBaseURL,
+		Profile:    in.Profile,
+	})
+	if err != nil {
+		return destinationModel{}, err
+	}
+	ciphertext, err := s.cipher.Encrypt(payload)
+	if err != nil {
+		return destinationModel{}, err
+	}
+	return destinationModel{
+		ID:               in.ID,
+		Type:             string(in.Type),
+		ConfigCiphertext: ciphertext,
+		CreatedAt:        in.CreatedAt,
+		UpdatedAt:        in.UpdatedAt,
+	}, nil
+}
+
+func (s *Store) toDomainDestination(in destinationModel) (domain.ManagedDestination, error) {
+	plaintext, err := s.cipher.Decrypt(in.ConfigCiphertext)
+	if err != nil {
+		return domain.ManagedDestination{}, err
+	}
+	var payload destinationPayload
+	if err := json.Unmarshal(plaintext, &payload); err != nil {
+		return domain.ManagedDestination{}, err
+	}
+	return domain.ManagedDestination{
+		ID:         in.ID,
+		Type:       domain.DestinationType(in.Type),
+		WebhookURL: payload.WebhookURL,
+		BotToken:   payload.BotToken,
+		ChatID:     payload.ChatID,
+		APIBaseURL: payload.APIBaseURL,
+		Profile:    payload.Profile,
+		CreatedAt:  in.CreatedAt,
+		UpdatedAt:  in.UpdatedAt,
+	}, nil
 }
 
 func (s *Store) ClaimDueDeliveries(ctx context.Context, claim domain.ClaimRequest) ([]domain.DeliveryEnvelope, error) {

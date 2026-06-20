@@ -19,12 +19,14 @@ import (
 	"github.com/fanboykun/webhook-hub/internal/app"
 	"github.com/fanboykun/webhook-hub/internal/clock"
 	"github.com/fanboykun/webhook-hub/internal/config"
+	configcrypto "github.com/fanboykun/webhook-hub/internal/config/crypto"
 	"github.com/fanboykun/webhook-hub/internal/domain"
 	"github.com/fanboykun/webhook-hub/internal/ingress"
 	ghingress "github.com/fanboykun/webhook-hub/internal/ingress/github"
 	"github.com/fanboykun/webhook-hub/internal/ingress/watcher"
 	"github.com/fanboykun/webhook-hub/internal/observability"
 	"github.com/fanboykun/webhook-hub/internal/routing"
+	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
 	"github.com/fanboykun/webhook-hub/internal/storage/sqlite"
 )
 
@@ -216,9 +218,6 @@ func TestOpenAPIIncludesWatcherWebhook(t *testing.T) {
 	if !bytes.Contains(body, []byte(`"bearerAuth"`)) {
 		t.Fatalf("openapi missing bearer auth scheme: %s", string(body))
 	}
-	if !bytes.Contains(body, []byte(`"slack-deployments"`)) {
-		t.Fatalf("openapi missing configured destination enum: %s", string(body))
-	}
 }
 
 func TestDocsUsesScalarRenderer(t *testing.T) {
@@ -246,6 +245,151 @@ func TestDocsUsesScalarRenderer(t *testing.T) {
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte("persistAuth: true")) {
 		t.Fatalf("docs page does not persist auth: %s", rec.Body.String())
+	}
+}
+
+func TestDynamicConfigEndpoints(t *testing.T) {
+	t.Setenv("WATCHER_WEBHOOK_SECRET", "secret")
+	t.Setenv("SLACK_DEPLOYMENTS_WEBHOOK_URL", "https://example.invalid")
+	t.Setenv("GATEWAY_ADMIN_TOKEN", "admin-secret")
+	cfg := testConfig(t)
+
+	store := openEncryptedHTTPTestStore(t, cfg)
+	server := newEncryptedTestServer(t, cfg, store, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/integrations", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list integrations expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "[REDACTED]") {
+		t.Fatalf("expected redacted integration secret, body=%s", rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/integrations/github-main", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get integration expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"secret":"[REDACTED]"`) {
+		t.Fatalf("expected integration detail to redact secret, body=%s", rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/destinations", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list destinations expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"webhook_url":"[REDACTED]"`) {
+		t.Fatalf("expected destination list to redact webhook url, body=%s", rec.Body.String())
+	}
+
+	updateIntegrationBody := []byte(`{"id":"github-main","source":"github","secret":"[REDACTED]"}`)
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/integrations/github-main", bytes.NewReader(updateIntegrationBody))
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update integration expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	integration, err := store.GetIntegration(context.Background(), "github-main")
+	if err != nil {
+		t.Fatalf("get integration failed: %v", err)
+	}
+	if integration.Secret != "github-secret" {
+		t.Fatalf("expected preserved integration secret, got %q", integration.Secret)
+	}
+
+	updateBody := []byte(`{"id":"slack-deployments","type":"slack","webhook_url":"[REDACTED]","profile":"detailed"}`)
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/destinations/slack-deployments", bytes.NewReader(updateBody))
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update destination expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	item, err := store.GetDestination(context.Background(), "slack-deployments")
+	if err != nil {
+		t.Fatalf("get destination failed: %v", err)
+	}
+	if item.WebhookURL != "https://example.invalid" {
+		t.Fatalf("expected preserved webhook url, got %q", item.WebhookURL)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/destinations/slack-deployments", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get destination expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"webhook_url":"[REDACTED]"`) {
+		t.Fatalf("expected destination detail to redact webhook url, body=%s", rec.Body.String())
+	}
+
+	createIntegrationBody := []byte(`{"id":"github-secondary","source":"github","secret":"new-github-secret"}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/integrations", bytes.NewReader(createIntegrationBody))
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create integration expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/integrations/github-secondary", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete integration expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	createDestinationBody := []byte(`{"id":"telegram-ops","type":"telegram","bot_token":"bot-token","chat_id":"-100123456789","profile":"detailed"}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/destinations", bytes.NewReader(createDestinationBody))
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create destination expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	routeBody := []byte(`{"id":"telegram-route","match":{"sources":["watcher"]},"destinations":["telegram-ops"]}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/routes", bytes.NewReader(routeBody))
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create route expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/destinations/telegram-ops", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete destination expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/routes", bytes.NewReader(routeBody))
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected route validation failure after destination delete, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -659,6 +803,18 @@ func testConfig(t *testing.T) config.Config {
 				Profile:       "detailed",
 			},
 		},
+		RendererProfiles: map[string]config.ProfileConfig{
+			"detailed": {
+				"watcher": config.SourceConfig{
+					Default: config.DestinationTemplates{
+						Slack: &config.SlackTemplateConfig{
+							Title: "{{.Title}}",
+							Body:  "{{.Summary}}",
+						},
+					},
+				},
+			},
+		},
 	}
 }
 
@@ -680,12 +836,48 @@ func seededRoutes() []domain.Route {
 func newTestServer(t *testing.T, cfg config.Config, store *sqlite.Store, routes []domain.Route) *Server {
 	t.Helper()
 	engine := routing.New(routes)
-	service := ingress.NewService(store, cfg, testRegistry(), engine, clock.Real{}, observability.NewLogger(cfg.Logging))
-	appService := app.NewService(cfg, clock.Real{}, store, service, engine)
+	integrations := runtimeconfig.NewIntegrationRegistry(cfg.Integrations)
+	destinations := runtimeconfig.NewDestinationRegistry(cfg.Destinations)
+	service := ingress.NewService(store, cfg, testRegistry(), engine, integrations, destinations, clock.Real{}, observability.NewLogger(cfg.Logging))
+	appService := app.NewService(cfg, clock.Real{}, store, service, engine, integrations, destinations)
 	if routes != nil {
 		engine.Replace(routes)
 	}
 	return New(cfg, appService, observability.NewLogger(cfg.Logging))
+}
+
+func newEncryptedTestServer(t *testing.T, cfg config.Config, store *sqlite.Store, routes []domain.Route) *Server {
+	t.Helper()
+	engine := routing.New(routes)
+	integrations := runtimeconfig.NewIntegrationRegistry(cfg.Integrations)
+	destinations := runtimeconfig.NewDestinationRegistry(cfg.Destinations)
+	service := ingress.NewService(store, cfg, testRegistry(), engine, integrations, destinations, clock.Real{}, observability.NewLogger(cfg.Logging))
+	appService := app.NewService(cfg, clock.Real{}, store, service, engine, integrations, destinations)
+	if err := appService.BootstrapDynamicConfig(context.Background()); err != nil {
+		t.Fatalf("bootstrap dynamic config: %v", err)
+	}
+	if routes != nil {
+		engine.Replace(routes)
+	}
+	return New(cfg, appService, observability.NewLogger(cfg.Logging))
+}
+
+func openEncryptedHTTPTestStore(t *testing.T, cfg config.Config) *sqlite.Store {
+	t.Helper()
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	cipher, err := configcrypto.NewFromString(hex.EncodeToString(key))
+	if err != nil {
+		t.Fatalf("new cipher: %v", err)
+	}
+	store, err := sqlite.OpenWithCipher(cfg.Database, observability.NewLogger(cfg.Logging), cipher)
+	if err != nil {
+		t.Fatalf("open encrypted store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return store
 }
 
 func deliverySeedBatch(now time.Time) domain.IngestBatch {

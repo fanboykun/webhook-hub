@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sort"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humagin"
@@ -45,7 +44,6 @@ func New(cfg config.Config, service *app.Service, logger *slog.Logger) *Server {
 	})
 
 	registerRoutes(api, cfg, NewHandler(service))
-	applyDestinationEnums(api.OpenAPI(), cfg)
 
 	server := &http.Server{
 		Addr:              cfg.Server.Address,
@@ -91,40 +89,4 @@ func scalarDocsHTML(title, openAPIPath string) string {
     </script>
   </body>
 </html>`, title, openAPIPath)
-}
-
-func applyDestinationEnums(spec *huma.OpenAPI, cfg config.Config) {
-	if spec == nil || spec.Components == nil || spec.Components.Schemas == nil {
-		return
-	}
-
-	enum := destinationEnumValues(cfg)
-	if len(enum) == 0 {
-		return
-	}
-
-	for _, schema := range spec.Components.Schemas.Map() {
-		if schema == nil || schema.Properties == nil {
-			continue
-		}
-		property := schema.Properties["destinations"]
-		if property == nil || property.Items == nil {
-			continue
-		}
-		property.Items.Enum = enum
-	}
-}
-
-func destinationEnumValues(cfg config.Config) []any {
-	keys := make([]string, 0, len(cfg.Destinations))
-	for key := range cfg.Destinations {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	enum := make([]any, 0, len(keys))
-	for _, key := range keys {
-		enum = append(enum, key)
-	}
-	return enum
 }

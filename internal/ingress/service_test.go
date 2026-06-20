@@ -16,6 +16,7 @@ import (
 	"github.com/fanboykun/webhook-hub/internal/domain"
 	"github.com/fanboykun/webhook-hub/internal/observability"
 	"github.com/fanboykun/webhook-hub/internal/routing"
+	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
 	"github.com/fanboykun/webhook-hub/internal/storage/sqlite"
 )
 
@@ -68,7 +69,16 @@ func TestHandleUnroutedWatcherWebhookDoesNotCreateDeliveries(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	service := NewService(store, cfg, NewRegistry(fakeWatcherAdapter{}), routing.New(nil), clock.Real{}, observability.NewLogger(cfg.Logging))
+	service := NewService(
+		store,
+		cfg,
+		NewRegistry(fakeWatcherAdapter{}),
+		routing.New(nil),
+		runtimeconfig.NewIntegrationRegistry(cfg.Integrations),
+		runtimeconfig.NewDestinationRegistry(cfg.Destinations),
+		clock.Real{},
+		observability.NewLogger(cfg.Logging),
+	)
 
 	now := time.Now().UTC()
 	body := []byte(`{"schema_version":"v1","event_id":"deploy_01","event_type":"watcher.deployment_failed","occurred_at":"2026-06-18T08:42:10Z","watcher":{"id":12,"name":"api-prod"},"attempt":{"id":302,"kind":"deploy","reason":"new_version_found","status":"failed","triggered_by":"agent","target_version":"v1.4.3","from_version":"v1.4.2","failed_target_version":"","failure_phase":"health_check","error":"health check returned 503","parent_attempt_id":null,"root_attempt_id":302},"summary":"Deployment of api-prod to v1.4.3 failed during health_check"}`)
@@ -122,6 +132,90 @@ func TestHandleUnroutedWatcherWebhookDoesNotCreateDeliveries(t *testing.T) {
 	}
 	if len(claimed) != 0 {
 		t.Fatalf("expected no claimable deliveries, got %+v", claimed)
+	}
+}
+
+func TestHandleUsesHotReloadedIntegrationRegistry(t *testing.T) {
+	t.Setenv("WATCHER_WEBHOOK_SECRET", "secret")
+
+	cfg := config.Config{
+		Server:  config.ServerConfig{MaxWebhookBodyBytes: 1 << 20},
+		API:     config.APIConfig{ResolvedAdminToken: "admin-secret"},
+		Logging: config.LoggingConfig{Format: "text"},
+		Database: config.DatabaseConfig{
+			Path:               t.TempDir() + "/gateway.db",
+			BusyTimeout:        5 * time.Second,
+			MaxOpenConnections: 1,
+			RetainRawPayloads:  true,
+		},
+		Workers: config.WorkersConfig{
+			BatchSize:     10,
+			Concurrency:   1,
+			LeaseDuration: time.Minute,
+		},
+		Retry: config.RetryConfig{MaxAttempts: 3, BaseDelay: time.Second, MaxDelay: time.Minute},
+		Destinations: map[string]config.DestinationConfig{
+			"slack-deployments": {Type: domain.DestinationSlack, ResolvedURL: "https://example.invalid"},
+		},
+	}
+
+	store, err := sqlite.Open(cfg.Database, observability.NewLogger(cfg.Logging))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	integrations := runtimeconfig.NewIntegrationRegistry(nil)
+	service := NewService(
+		store,
+		cfg,
+		NewRegistry(fakeWatcherAdapter{}),
+		routing.New([]domain.Route{{ID: "watcher-all", Match: domain.RouteMatchCriteria{Sources: []domain.Source{domain.SourceWatcher}}, Destinations: []string{"slack-deployments"}}}),
+		integrations,
+		runtimeconfig.NewDestinationRegistry(cfg.Destinations),
+		clock.Real{},
+		observability.NewLogger(cfg.Logging),
+	)
+
+	now := time.Now().UTC()
+	body := []byte(`{"schema_version":"v1","event_id":"deploy_02","event_type":"watcher.deployment_failed"}`)
+	ts := now.Unix()
+	mac := hmac.New(sha256.New, []byte("secret"))
+	mac.Write([]byte("deploy_02"))
+	mac.Write([]byte("."))
+	mac.Write([]byte(strconv.FormatInt(ts, 10)))
+	mac.Write([]byte("."))
+	mac.Write(body)
+	signature := "v1," + base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	headers := http.Header{}
+	headers.Set("webhook-id", "deploy_02")
+	headers.Set("webhook-timestamp", strconv.FormatInt(ts, 10))
+	headers.Set("webhook-signature", signature)
+	req := InboundRequest{
+		IntegrationID: "watcher-production",
+		Headers:       headers,
+		RawBody:       body,
+		ReceivedAt:    now,
+	}
+
+	if _, err := service.Handle(context.Background(), domain.SourceWatcher, req); err != ErrUnknownIntegration {
+		t.Fatalf("expected unknown integration before reload, got %v", err)
+	}
+
+	integrations.Replace(map[string]config.IntegrationConfig{
+		"watcher-production": {
+			Source:         domain.SourceWatcher,
+			ResolvedSecret: "secret",
+			ReplayWindow:   5 * time.Minute,
+		},
+	})
+
+	result, err := service.Handle(context.Background(), domain.SourceWatcher, req)
+	if err != nil {
+		t.Fatalf("handle after reload failed: %v", err)
+	}
+	if result.DeliveryCount != 1 {
+		t.Fatalf("expected 1 delivery after reload, got %d", result.DeliveryCount)
 	}
 }
 

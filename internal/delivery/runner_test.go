@@ -10,6 +10,7 @@ import (
 	"github.com/fanboykun/webhook-hub/internal/clock"
 	"github.com/fanboykun/webhook-hub/internal/domain"
 	"github.com/fanboykun/webhook-hub/internal/observability"
+	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
 	"github.com/fanboykun/webhook-hub/internal/storage/sqlite"
 )
 
@@ -80,7 +81,7 @@ func TestRunnerProcessesPendingDelivery(t *testing.T) {
 		t.Fatalf("seed ingest: %v", err)
 	}
 
-	service := NewService(store, cfg, clock.Real{}, observability.NewLogger(cfg.Logging))
+	service := NewService(store, cfg, runtimeconfig.NewDestinationRegistry(cfg.Destinations), clock.Real{}, observability.NewLogger(cfg.Logging))
 	runner := NewRunner(service)
 
 	ctx, cancel := context.WithCancel(context.Background())

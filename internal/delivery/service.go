@@ -9,6 +9,7 @@ import (
 	"github.com/fanboykun/webhook-hub/internal/config"
 	"github.com/fanboykun/webhook-hub/internal/domain"
 	"github.com/fanboykun/webhook-hub/internal/message"
+	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
 	sendpkg "github.com/fanboykun/webhook-hub/internal/sender"
 	slacksender "github.com/fanboykun/webhook-hub/internal/sender/slack"
 	telegramsender "github.com/fanboykun/webhook-hub/internal/sender/telegram"
@@ -23,21 +24,23 @@ type Service struct {
 	renderer       message.Renderer
 	slackSender    *slacksender.Sender
 	telegramSender *telegramsender.Sender
+	destinations   *runtimeconfig.DestinationRegistry
 }
 
-func NewService(store storage.Store, cfg config.Config, clk clock.Clock, logger *slog.Logger) *Service {
-	return NewServiceWithRenderer(store, cfg, clk, logger, message.NewConfigurableRenderer(cfg.RendererProfiles, nil, nil))
+func NewService(store storage.Store, cfg config.Config, destinations *runtimeconfig.DestinationRegistry, clk clock.Clock, logger *slog.Logger) *Service {
+	return NewServiceWithRenderer(store, cfg, destinations, clk, logger, message.NewConfigurableRenderer(cfg.RendererProfiles, nil, nil))
 }
 
-func NewServiceWithRenderer(store storage.Store, cfg config.Config, clk clock.Clock, logger *slog.Logger, renderer message.Renderer) *Service {
+func NewServiceWithRenderer(store storage.Store, cfg config.Config, destinations *runtimeconfig.DestinationRegistry, clk clock.Clock, logger *slog.Logger, renderer message.Renderer) *Service {
 	return &Service{
 		store:          store,
 		cfg:            cfg,
 		clock:          clk,
 		logger:         logger,
 		renderer:       renderer,
-		slackSender:    slacksender.New(cfg.Destinations),
-		telegramSender: telegramsender.New(cfg.Destinations),
+		slackSender:    slacksender.New(destinations),
+		telegramSender: telegramsender.New(destinations),
+		destinations:   destinations,
 	}
 }
 
@@ -70,7 +73,19 @@ func (s *Service) ProcessOnce(ctx context.Context, workerID string) (int, error)
 
 func (s *Service) processEnvelope(ctx context.Context, workerID string, envelope domain.DeliveryEnvelope) error {
 	startedAt := s.clock.Now()
-	destinationCfg := s.cfg.Destinations[envelope.Delivery.DestinationID]
+	destinationCfg, ok := s.destinations.Get(envelope.Delivery.DestinationID)
+	if !ok {
+		return s.store.CompleteAttempt(ctx, domain.AttemptResult{
+			DeliveryID:   envelope.Delivery.ID,
+			WorkerID:     workerID,
+			StartedAt:    startedAt,
+			CompletedAt:  s.clock.Now(),
+			Outcome:      "permanent_failure",
+			ErrorCode:    "missing_destination",
+			ErrorMessage: "destination no longer exists",
+			NextStatus:   domain.DeliveryDeadLetter,
+		})
+	}
 	destination := domain.Destination{
 		ID:      envelope.Delivery.DestinationID,
 		Type:    destinationCfg.Type,

@@ -100,6 +100,106 @@ func registerRoutes(api huma.API, cfg config.Config, handler *Handler) {
 	}, handler.retryDelivery)
 
 	huma.Register(api, huma.Operation{
+		OperationID: "integrations-list",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/integrations",
+		Summary:     "List integrations",
+		Description: "Returns the active dynamically managed webhook integrations with secrets redacted.",
+		Tags:        []string{"Integrations"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+	}, handler.listIntegrations)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "integration-detail",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/integrations/{integration_id}",
+		Summary:     "Get integration detail",
+		Description: "Returns one dynamically managed webhook integration with secret fields redacted.",
+		Tags:        []string{"Integrations"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+	}, handler.getIntegration)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "integration-create",
+		Method:      http.MethodPost,
+		Path:        "/api/v1/integrations",
+		Summary:     "Create integration",
+		Description: "Creates a dynamically managed webhook integration, persists its encrypted secret fields, and reloads the live integration registry.",
+		Tags:        []string{"Integrations"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+	}, handler.createIntegration)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "integration-update",
+		Method:      http.MethodPut,
+		Path:        "/api/v1/integrations/{integration_id}",
+		Summary:     "Update integration",
+		Description: "Updates one dynamically managed integration. Submitting `\"[REDACTED]\"` or omitting a secret field preserves the existing encrypted value.",
+		Tags:        []string{"Integrations"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+	}, handler.updateIntegration)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "integration-delete",
+		Method:      http.MethodDelete,
+		Path:        "/api/v1/integrations/{integration_id}",
+		Summary:     "Delete integration",
+		Description: "Deletes one dynamically managed integration and reloads the live integration registry.",
+		Tags:        []string{"Integrations"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+	}, handler.deleteIntegration)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "destinations-list",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/destinations",
+		Summary:     "List destinations",
+		Description: "Returns the active dynamically managed delivery destinations with sensitive fields redacted.",
+		Tags:        []string{"Destinations"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+	}, handler.listDestinations)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "destination-detail",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/destinations/{destination_id}",
+		Summary:     "Get destination detail",
+		Description: "Returns one dynamically managed delivery destination with secret fields redacted.",
+		Tags:        []string{"Destinations"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+	}, handler.getDestination)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "destination-create",
+		Method:      http.MethodPost,
+		Path:        "/api/v1/destinations",
+		Summary:     "Create destination",
+		Description: "Creates a dynamically managed delivery destination, persists its encrypted secret fields, and reloads the live destination registry.",
+		Tags:        []string{"Destinations"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+	}, handler.createDestination)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "destination-update",
+		Method:      http.MethodPut,
+		Path:        "/api/v1/destinations/{destination_id}",
+		Summary:     "Update destination",
+		Description: "Updates one dynamically managed destination. Submitting `\"[REDACTED]\"` or omitting a secret field preserves the existing encrypted value.",
+		Tags:        []string{"Destinations"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+	}, handler.updateDestination)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "destination-delete",
+		Method:      http.MethodDelete,
+		Path:        "/api/v1/destinations/{destination_id}",
+		Summary:     "Delete destination",
+		Description: "Deletes one dynamically managed destination and reloads the live destination registry.",
+		Tags:        []string{"Destinations"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+	}, handler.deleteDestination)
+
+	huma.Register(api, huma.Operation{
 		OperationID: "routes-list",
 		Method:      http.MethodGet,
 		Path:        "/api/v1/routes",

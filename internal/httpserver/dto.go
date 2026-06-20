@@ -233,6 +233,104 @@ type routeDeleteOutput struct {
 	}
 }
 
+type integrationModel struct {
+	ID           string        `json:"id"`
+	Source       string        `json:"source"`
+	Secret       string        `json:"secret,omitempty"`
+	ClientSecret string        `json:"client_secret,omitempty"`
+	ReplayWindow time.Duration `json:"replay_window,omitempty"`
+	CreatedAt    time.Time     `json:"created_at,omitempty"`
+	UpdatedAt    time.Time     `json:"updated_at,omitempty"`
+}
+
+type destinationConfigModel struct {
+	ID         string    `json:"id"`
+	Type       string    `json:"type"`
+	WebhookURL string    `json:"webhook_url,omitempty"`
+	BotToken   string    `json:"bot_token,omitempty"`
+	ChatID     string    `json:"chat_id,omitempty"`
+	APIBaseURL string    `json:"api_base_url,omitempty"`
+	Profile    string    `json:"profile,omitempty"`
+	CreatedAt  time.Time `json:"created_at,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at,omitempty"`
+}
+
+type listIntegrationsInput struct {
+	Authorization string `header:"Authorization" hidden:"true"`
+}
+
+type integrationDetailInput struct {
+	Authorization string `header:"Authorization" hidden:"true"`
+	IntegrationID string `path:"integration_id"`
+}
+
+type createIntegrationInput struct {
+	Authorization string `header:"Authorization" hidden:"true"`
+	Body          integrationModel
+}
+
+type updateIntegrationInput struct {
+	Authorization string `header:"Authorization" hidden:"true"`
+	IntegrationID string `path:"integration_id"`
+	Body          integrationModel
+}
+
+type deleteIntegrationInput struct {
+	Authorization string `header:"Authorization" hidden:"true"`
+	IntegrationID string `path:"integration_id"`
+}
+
+type integrationsResponse struct {
+	Body struct {
+		Items []integrationModel `json:"items"`
+	}
+}
+
+type integrationResponse struct {
+	Body integrationModel
+}
+
+type listDestinationsInput struct {
+	Authorization string `header:"Authorization" hidden:"true"`
+}
+
+type destinationDetailInput struct {
+	Authorization string `header:"Authorization" hidden:"true"`
+	DestinationID string `path:"destination_id"`
+}
+
+type createDestinationInput struct {
+	Authorization string `header:"Authorization" hidden:"true"`
+	Body          destinationConfigModel
+}
+
+type updateDestinationInput struct {
+	Authorization string `header:"Authorization" hidden:"true"`
+	DestinationID string `path:"destination_id"`
+	Body          destinationConfigModel
+}
+
+type deleteDestinationInput struct {
+	Authorization string `header:"Authorization" hidden:"true"`
+	DestinationID string `path:"destination_id"`
+}
+
+type destinationsResponse struct {
+	Body struct {
+		Items []destinationConfigModel `json:"items"`
+	}
+}
+
+type destinationResponse struct {
+	Body destinationConfigModel
+}
+
+type deleteEntityOutput struct {
+	Body struct {
+		Deleted bool `json:"deleted"`
+	}
+}
+
 func routeModelFromDomain(route domain.Route) routeModel {
 	return routeModel{
 		ID:           route.ID,
@@ -257,6 +355,61 @@ func domainRouteFromModel(route routeModel) domain.Route {
 		Match:        domainRouteMatchFromModel(route.Match),
 		Destinations: routeDestinationsToStrings(route.Destinations),
 	}
+}
+
+func integrationModelFromDomain(in domain.ManagedIntegration) integrationModel {
+	return integrationModel{
+		ID:           in.ID,
+		Source:       string(in.Source),
+		Secret:       "[REDACTED]",
+		ClientSecret: redactIfPresent(in.ClientSecret),
+		ReplayWindow: in.ReplayWindow,
+		CreatedAt:    in.CreatedAt,
+		UpdatedAt:    in.UpdatedAt,
+	}
+}
+
+func domainIntegrationFromModel(in integrationModel) domain.ManagedIntegration {
+	return domain.ManagedIntegration{
+		ID:           in.ID,
+		Source:       domain.Source(in.Source),
+		Secret:       in.Secret,
+		ClientSecret: in.ClientSecret,
+		ReplayWindow: in.ReplayWindow,
+	}
+}
+
+func destinationModelFromDomain(in domain.ManagedDestination) destinationConfigModel {
+	return destinationConfigModel{
+		ID:         in.ID,
+		Type:       string(in.Type),
+		WebhookURL: redactIfPresent(in.WebhookURL),
+		BotToken:   redactIfPresent(in.BotToken),
+		ChatID:     in.ChatID,
+		APIBaseURL: in.APIBaseURL,
+		Profile:    in.Profile,
+		CreatedAt:  in.CreatedAt,
+		UpdatedAt:  in.UpdatedAt,
+	}
+}
+
+func domainDestinationFromModel(in destinationConfigModel) domain.ManagedDestination {
+	return domain.ManagedDestination{
+		ID:         in.ID,
+		Type:       domain.DestinationType(in.Type),
+		WebhookURL: in.WebhookURL,
+		BotToken:   in.BotToken,
+		ChatID:     in.ChatID,
+		APIBaseURL: in.APIBaseURL,
+		Profile:    in.Profile,
+	}
+}
+
+func redactIfPresent(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return "[REDACTED]"
 }
 
 func routeMatchModelFromDomain(in domain.RouteMatchCriteria) routeMatchModel {

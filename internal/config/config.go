@@ -282,7 +282,7 @@ func (c Config) Validate() error {
 			}
 			if strings.TrimSpace(destination.ChatID) == "" {
 				errs = append(errs, fmt.Errorf("destination %q chat_id is required", id))
-			} else if !isTelegramChatID(destination.ChatID) {
+			} else if !IsTelegramChatID(destination.ChatID) {
 				errs = append(errs, fmt.Errorf("destination %q chat_id %q is invalid", id, destination.ChatID))
 			}
 		default:
@@ -392,7 +392,7 @@ func resolveSecretValue(ref string) (string, string, error) {
 	return value, ref, nil
 }
 
-func isTelegramChatID(value string) bool {
+func IsTelegramChatID(value string) bool {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return false
