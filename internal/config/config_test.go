@@ -177,3 +177,160 @@ func TestValidateRejectsInvalidTelegramChatID(t *testing.T) {
 		t.Fatal("expected invalid telegram chat id error")
 	}
 }
+
+func TestValidateRendererProfiles(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     Config
+		wantErr bool
+	}{
+		{
+			name: "valid config with profile",
+			cfg: Config{
+				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
+				Database: DatabaseConfig{Path: "gateway.db"},
+				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+				Retry:    RetryConfig{MaxAttempts: 1},
+				Destinations: map[string]DestinationConfig{
+					"slack-dest": {
+						Type:          domain.DestinationSlack,
+						WebhookURLEnv: "SLACK_URL",
+						Profile:       "detailed",
+					},
+				},
+				RendererProfiles: map[string]ProfileConfig{
+					"detailed": {
+						"watcher": SourceConfig{
+							Default: DestinationTemplates{
+								Slack: &SlackTemplateConfig{
+									Title: "[{{.Severity}}] {{.Title}}",
+									Body:  "{{.Summary}} - {{.OccurredAt.Format \"2006-01-02\"}}",
+								},
+							},
+							Overrides: map[string]DestinationTemplates{
+								"watcher.deployment.failed": {
+									Slack: &SlackTemplateConfig{
+										Title: "ALERT: {{.Title}} failed in {{.Environment}}",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid template syntax",
+			cfg: Config{
+				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
+				Database: DatabaseConfig{Path: "gateway.db"},
+				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+				Retry:    RetryConfig{MaxAttempts: 1},
+				RendererProfiles: map[string]ProfileConfig{
+					"detailed": {
+						"watcher": SourceConfig{
+							Default: DestinationTemplates{
+								Slack: &SlackTemplateConfig{
+									Title: "[{{.Severity}",
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid template field",
+			cfg: Config{
+				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
+				Database: DatabaseConfig{Path: "gateway.db"},
+				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+				Retry:    RetryConfig{MaxAttempts: 1},
+				RendererProfiles: map[string]ProfileConfig{
+					"detailed": {
+						"watcher": SourceConfig{
+							Default: DestinationTemplates{
+								Slack: &SlackTemplateConfig{
+									Title: "[{{.ReceiptID}}]",
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "undefined profile reference",
+			cfg: Config{
+				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
+				Database: DatabaseConfig{Path: "gateway.db"},
+				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+				Retry:    RetryConfig{MaxAttempts: 1},
+				Destinations: map[string]DestinationConfig{
+					"slack-dest": {
+						Type:          domain.DestinationSlack,
+						WebhookURLEnv: "SLACK_URL",
+						Profile:       "nonexistent",
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "unknown source name",
+			cfg: Config{
+				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
+				Database: DatabaseConfig{Path: "gateway.db"},
+				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+				Retry:    RetryConfig{MaxAttempts: 1},
+				RendererProfiles: map[string]ProfileConfig{
+					"detailed": {
+						"unknown_source": SourceConfig{
+							Default: DestinationTemplates{
+								Slack: &SlackTemplateConfig{
+									Title: "{{.Title}}",
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "unknown event type override",
+			cfg: Config{
+				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
+				Database: DatabaseConfig{Path: "gateway.db"},
+				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+				Retry:    RetryConfig{MaxAttempts: 1},
+				RendererProfiles: map[string]ProfileConfig{
+					"detailed": {
+						"watcher": SourceConfig{
+							Overrides: map[string]DestinationTemplates{
+								"watcher.invalid.event": {
+									Slack: &SlackTemplateConfig{
+										Title: "{{.Title}}",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Validate() error = %v, wantErr = %v", err, tt.wantErr)
+			}
+		})
+	}
+}

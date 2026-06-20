@@ -1,12 +1,14 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/fanboykun/webhook-hub/internal/domain"
@@ -14,14 +16,56 @@ import (
 )
 
 type Config struct {
-	Server       ServerConfig                 `mapstructure:"server"`
-	API          APIConfig                    `mapstructure:"api"`
-	Logging      LoggingConfig                `mapstructure:"logging"`
-	Database     DatabaseConfig               `mapstructure:"database"`
-	Workers      WorkersConfig                `mapstructure:"workers"`
-	Retry        RetryConfig                  `mapstructure:"retry"`
-	Integrations map[string]IntegrationConfig `mapstructure:"integrations"`
-	Destinations map[string]DestinationConfig `mapstructure:"destinations"`
+	Server           ServerConfig                 `mapstructure:"server"`
+	API              APIConfig                    `mapstructure:"api"`
+	Logging          LoggingConfig                `mapstructure:"logging"`
+	Database         DatabaseConfig               `mapstructure:"database"`
+	Workers          WorkersConfig                `mapstructure:"workers"`
+	Retry            RetryConfig                  `mapstructure:"retry"`
+	Integrations     map[string]IntegrationConfig `mapstructure:"integrations"`
+	Destinations     map[string]DestinationConfig `mapstructure:"destinations"`
+	RendererProfiles map[string]ProfileConfig     `mapstructure:"renderer_profiles"`
+}
+
+type ProfileConfig map[string]SourceConfig
+
+type SourceConfig struct {
+	Default   DestinationTemplates            `mapstructure:"default"`
+	Overrides map[string]DestinationTemplates `mapstructure:"overrides"`
+}
+
+type DestinationTemplates struct {
+	Slack    *SlackTemplateConfig    `mapstructure:"slack"`
+	Telegram *TelegramTemplateConfig `mapstructure:"telegram"`
+	Email    *EmailTemplateConfig    `mapstructure:"email"`
+}
+
+type SlackTemplateConfig struct {
+	Title string `mapstructure:"title"`
+	Body  string `mapstructure:"body"`
+}
+
+type TelegramTemplateConfig struct {
+	Text string `mapstructure:"text"`
+}
+
+type EmailTemplateConfig struct {
+	Subject string `mapstructure:"subject"`
+	Body    string `mapstructure:"body"`
+}
+
+type TemplateContext struct {
+	Title       string
+	Summary     string
+	Severity    string
+	Lifecycle   string
+	Service     string
+	Environment string
+	Release     string
+	CommitSHA   string
+	Actor       string
+	URL         string
+	OccurredAt  time.Time
 }
 
 type ServerConfig struct {
@@ -244,9 +288,90 @@ func (c Config) Validate() error {
 		default:
 			errs = append(errs, fmt.Errorf("destination %q type %q is not yet supported in this slice", id, destination.Type))
 		}
+
+		if destination.Profile != "" {
+			if _, ok := c.RendererProfiles[destination.Profile]; !ok {
+				errs = append(errs, fmt.Errorf("destination %q references undefined renderer profile %q", id, destination.Profile))
+			}
+		}
+	}
+
+	if err := c.ValidateRendererProfiles(); err != nil {
+		errs = append(errs, err)
 	}
 
 	return errors.Join(errs...)
+}
+
+func (c *Config) ValidateRendererProfiles() error {
+	var errs []error
+	for profileName, profile := range c.RendererProfiles {
+		for sourceName, sourceConfig := range profile {
+			if !domain.IsKnownSource(domain.Source(sourceName)) {
+				errs = append(errs, fmt.Errorf("profile %q: unknown source %q", profileName, sourceName))
+				continue
+			}
+
+			if err := validateDestinationTemplates(sourceConfig.Default); err != nil {
+				errs = append(errs, fmt.Errorf("profile %q source %q default: %w", profileName, sourceName, err))
+			}
+
+			for eventType, destTemplates := range sourceConfig.Overrides {
+				if !domain.IsKnownEventType(eventType) {
+					errs = append(errs, fmt.Errorf("profile %q source %q override: unknown event type %q", profileName, sourceName, eventType))
+					continue
+				}
+				if err := validateDestinationTemplates(destTemplates); err != nil {
+					errs = append(errs, fmt.Errorf("profile %q source %q override %q: %w", profileName, sourceName, eventType, err))
+				}
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func validateDestinationTemplates(dt DestinationTemplates) error {
+	var errs []error
+	if dt.Slack != nil {
+		if err := ValidateTemplate(dt.Slack.Title); err != nil {
+			errs = append(errs, fmt.Errorf("slack title: %w", err))
+		}
+		if err := ValidateTemplate(dt.Slack.Body); err != nil {
+			errs = append(errs, fmt.Errorf("slack body: %w", err))
+		}
+	}
+	if dt.Telegram != nil {
+		if err := ValidateTemplate(dt.Telegram.Text); err != nil {
+			errs = append(errs, fmt.Errorf("telegram text: %w", err))
+		}
+	}
+	if dt.Email != nil {
+		if err := ValidateTemplate(dt.Email.Subject); err != nil {
+			errs = append(errs, fmt.Errorf("email subject: %w", err))
+		}
+		if err := ValidateTemplate(dt.Email.Body); err != nil {
+			errs = append(errs, fmt.Errorf("email body: %w", err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func ValidateTemplate(tplStr string) error {
+	if tplStr == "" {
+		return nil
+	}
+	tmpl, err := template.New("test").Option("missingkey=error").Parse(tplStr)
+	if err != nil {
+		return fmt.Errorf("invalid template syntax: %w", err)
+	}
+
+	var dummy TemplateContext
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, &dummy)
+	if err != nil {
+		return fmt.Errorf("invalid template fields: %w", err)
+	}
+	return nil
 }
 
 func resolveSecretValue(ref string) (string, string, error) {
