@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/fanboykun/webhook-hub/internal/config"
+	configcrypto "github.com/fanboykun/webhook-hub/internal/config/crypto"
 	sqlite_adapter "github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 
@@ -15,6 +16,10 @@ import (
 )
 
 func Open(cfg config.DatabaseConfig, logger *slog.Logger) (*Store, error) {
+	return OpenWithCipher(cfg, logger, nil)
+}
+
+func OpenWithCipher(cfg config.DatabaseConfig, logger *slog.Logger, c *configcrypto.Cipher) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(cfg.Path), 0o755); err != nil {
 		return nil, fmt.Errorf("create database dir: %w", err)
 	}
@@ -50,7 +55,7 @@ func Open(cfg config.DatabaseConfig, logger *slog.Logger) (*Store, error) {
 		return nil, fmt.Errorf("migrate schema: %w", err)
 	}
 
-	return &Store{db: db}, nil
+	return &Store{db: db, cipher: c}, nil
 }
 
 func (s *Store) Ping(ctx context.Context) error {

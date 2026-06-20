@@ -84,3 +84,27 @@ type routeModel struct {
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
+
+type integrationModel struct {
+	ID               string `gorm:"primaryKey"`
+	Source           string `gorm:"index"`
+	ConfigCiphertext []byte
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+func (integrationModel) TableName() string {
+	return "integrations"
+}
+
+type destinationModel struct {
+	ID               string `gorm:"primaryKey"`
+	Type             string `gorm:"index"`
+	ConfigCiphertext []byte
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+func (destinationModel) TableName() string {
+	return "destinations"
+}

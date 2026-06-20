@@ -7,14 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fanboykun/webhook-hub/internal/config"
 	"github.com/fanboykun/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
 	"github.com/fanboykun/webhook-hub/internal/sender"
 )
 
 type Sender struct {
 	client       *http.Client
-	destinations map[string]config.DestinationConfig
+	destinations *runtimeconfig.DestinationRegistry
 }
 
 type Error struct {
@@ -31,7 +31,7 @@ func (e *Error) Error() string {
 	return e.Err.Error()
 }
 
-func New(destinations map[string]config.DestinationConfig) *Sender {
+func New(destinations *runtimeconfig.DestinationRegistry) *Sender {
 	return &Sender{
 		client:       &http.Client{Timeout: 10 * time.Second},
 		destinations: destinations,
@@ -43,7 +43,7 @@ func (s *Sender) Type() domain.DestinationType {
 }
 
 func (s *Sender) Send(ctx context.Context, destinationID string, message domain.RenderedMessage) (sender.SendResult, error) {
-	destination, ok := s.destinations[destinationID]
+	destination, ok := s.destinations.Get(destinationID)
 	if !ok || destination.ResolvedURL == "" {
 		return sender.SendResult{}, &Error{Code: "missing_destination", Err: fmt.Errorf("unknown slack destination %q", destinationID)}
 	}

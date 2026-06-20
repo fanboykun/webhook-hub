@@ -8,6 +8,7 @@ import (
 
 	"github.com/fanboykun/webhook-hub/internal/config"
 	"github.com/fanboykun/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
 )
 
 func TestSendIncludesTelegramErrorBody(t *testing.T) {
@@ -17,14 +18,14 @@ func TestSendIncludesTelegramErrorBody(t *testing.T) {
 	}))
 	defer api.Close()
 
-	sender := New(map[string]config.DestinationConfig{
+	sender := New(runtimeconfig.NewDestinationRegistry(map[string]config.DestinationConfig{
 		"telegram-group": {
 			Type:          domain.DestinationTelegram,
 			ResolvedToken: "bot-token",
 			ChatID:        "-100123456789",
 			APIBaseURL:    api.URL,
 		},
-	})
+	}))
 
 	_, err := sender.Send(context.Background(), "telegram-group", domain.RenderedMessage{
 		ContentType: "text/html; charset=utf-8",

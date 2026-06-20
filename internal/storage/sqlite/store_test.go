@@ -2,10 +2,12 @@ package sqlite
 
 import (
 	"context"
+	"encoding/hex"
 	"testing"
 	"time"
 
 	"github.com/fanboykun/webhook-hub/internal/config"
+	configcrypto "github.com/fanboykun/webhook-hub/internal/config/crypto"
 	"github.com/fanboykun/webhook-hub/internal/domain"
 	"github.com/fanboykun/webhook-hub/internal/observability"
 )
@@ -266,6 +268,67 @@ func TestIngestBatchValidation(t *testing.T) {
 	}
 }
 
+func TestDynamicConfigCRUD(t *testing.T) {
+	store := openEncryptedTestStore(t)
+	now := time.Now().UTC()
+
+	integration := domain.ManagedIntegration{
+		ID:           "github-main",
+		Source:       domain.SourceGitHub,
+		Secret:       "github-secret",
+		ReplayWindow: 5 * time.Minute,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := store.CreateIntegration(context.Background(), integration); err != nil {
+		t.Fatalf("create integration failed: %v", err)
+	}
+
+	gotIntegration, err := store.GetIntegration(context.Background(), integration.ID)
+	if err != nil {
+		t.Fatalf("get integration failed: %v", err)
+	}
+	if gotIntegration.Secret != integration.Secret {
+		t.Fatalf("integration secret mismatch: got %q", gotIntegration.Secret)
+	}
+
+	destination := domain.ManagedDestination{
+		ID:         "slack-deployments",
+		Type:       domain.DestinationSlack,
+		WebhookURL: "https://hooks.slack.test/services/abc",
+		Profile:    "detailed",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	if err := store.CreateDestination(context.Background(), destination); err != nil {
+		t.Fatalf("create destination failed: %v", err)
+	}
+
+	gotDestination, err := store.GetDestination(context.Background(), destination.ID)
+	if err != nil {
+		t.Fatalf("get destination failed: %v", err)
+	}
+	if gotDestination.WebhookURL != destination.WebhookURL {
+		t.Fatalf("destination webhook mismatch: got %q", gotDestination.WebhookURL)
+	}
+
+	var rawIntegration integrationModel
+	if err := store.db.WithContext(context.Background()).First(&rawIntegration, "id = ?", integration.ID).Error; err != nil {
+		t.Fatalf("load raw integration row failed: %v", err)
+	}
+	if string(rawIntegration.ConfigCiphertext) == integration.Secret {
+		t.Fatal("expected encrypted integration secret at rest")
+	}
+
+	var rawDestination destinationModel
+	if err := store.db.WithContext(context.Background()).First(&rawDestination, "id = ?", destination.ID).Error; err != nil {
+		t.Fatalf("load raw destination row failed: %v", err)
+	}
+	if string(rawDestination.ConfigCiphertext) == destination.WebhookURL {
+		t.Fatal("expected encrypted destination secret at rest")
+	}
+}
+
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
 	path := t.TempDir() + "/gateway.db"
@@ -277,6 +340,30 @@ func openTestStore(t *testing.T) *Store {
 	}, observability.NewLogger(config.LoggingConfig{Format: "text"}))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return store
+}
+
+func openEncryptedTestStore(t *testing.T) *Store {
+	t.Helper()
+	path := t.TempDir() + "/gateway.db"
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	cipher, err := configcrypto.NewFromString(hex.EncodeToString(key))
+	if err != nil {
+		t.Fatalf("new cipher: %v", err)
+	}
+	store, err := OpenWithCipher(config.DatabaseConfig{
+		Path:               path,
+		BusyTimeout:        5 * time.Second,
+		MaxOpenConnections: 1,
+		RetainRawPayloads:  true,
+	}, observability.NewLogger(config.LoggingConfig{Format: "text"}), cipher)
+	if err != nil {
+		t.Fatalf("open encrypted store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	return store

@@ -10,6 +10,7 @@ import (
 	"github.com/fanboykun/webhook-hub/internal/app"
 	"github.com/fanboykun/webhook-hub/internal/clock"
 	"github.com/fanboykun/webhook-hub/internal/config"
+	configcrypto "github.com/fanboykun/webhook-hub/internal/config/crypto"
 	"github.com/fanboykun/webhook-hub/internal/delivery"
 	"github.com/fanboykun/webhook-hub/internal/httpserver"
 	"github.com/fanboykun/webhook-hub/internal/ingress"
@@ -17,6 +18,7 @@ import (
 	"github.com/fanboykun/webhook-hub/internal/ingress/watcher"
 	"github.com/fanboykun/webhook-hub/internal/observability"
 	"github.com/fanboykun/webhook-hub/internal/routing"
+	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
 	"github.com/fanboykun/webhook-hub/internal/storage/sqlite"
 )
 
@@ -30,7 +32,12 @@ func main() {
 	logger := observability.NewLogger(cfg.Logging)
 	apiLogger := logger.With("component", "api")
 	workerLogger := logger.With("component", "worker")
-	store, err := sqlite.Open(cfg.Database, logger)
+	encryptionCipher, err := configcrypto.NewFromString(os.Getenv(configcrypto.EncryptionKeyEnv))
+	if err != nil {
+		logger.Error("config.encryption_key_invalid", "error", err)
+		os.Exit(1)
+	}
+	store, err := sqlite.OpenWithCipher(cfg.Database, logger, encryptionCipher)
 	if err != nil {
 		logger.Error("database.open_failed", "error", err)
 		os.Exit(1)
@@ -38,6 +45,8 @@ func main() {
 	defer store.Close()
 
 	routeEngine := routing.New(nil)
+	integrationRegistry := runtimeconfig.NewIntegrationRegistry(nil)
+	destinationRegistry := runtimeconfig.NewDestinationRegistry(nil)
 
 	ingressService := ingress.NewService(
 		store,
@@ -47,12 +56,18 @@ func main() {
 			ghingress.NewAdapter(),
 		),
 		routeEngine,
+		integrationRegistry,
+		destinationRegistry,
 		clock.Real{},
 		apiLogger,
 	)
-	deliveryService := delivery.NewService(store, cfg, clock.Real{}, workerLogger)
+	deliveryService := delivery.NewService(store, cfg, destinationRegistry, clock.Real{}, workerLogger)
 	deliveryRunner := delivery.NewRunner(deliveryService)
-	appService := app.NewService(cfg, clock.Real{}, store, ingressService, routeEngine)
+	appService := app.NewService(cfg, clock.Real{}, store, ingressService, routeEngine, integrationRegistry, destinationRegistry)
+	if err := appService.BootstrapDynamicConfig(context.Background()); err != nil {
+		logger.Error("dynamic_config.bootstrap_failed", "error", err)
+		os.Exit(1)
+	}
 	if err := appService.LoadRoutes(context.Background()); err != nil {
 		logger.Error("routes.load_failed", "error", err)
 		os.Exit(1)

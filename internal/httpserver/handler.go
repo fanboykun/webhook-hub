@@ -252,6 +252,164 @@ func (h *Handler) retryDelivery(ctx context.Context, input *retryDeliveryInput) 
 	return out, nil
 }
 
+func (h *Handler) listIntegrations(ctx context.Context, input *listIntegrationsInput) (*integrationsResponse, error) {
+	items, err := h.service.ListIntegrations(ctx, input.Authorization)
+	if err != nil {
+		switch {
+		case errors.Is(err, app.ErrUnauthorized):
+			return nil, huma.Error401Unauthorized("unauthorized")
+		default:
+			return nil, huma.Error503ServiceUnavailable("integrations unavailable")
+		}
+	}
+	out := &integrationsResponse{}
+	out.Body.Items = make([]integrationModel, 0, len(items))
+	for _, item := range items {
+		out.Body.Items = append(out.Body.Items, integrationModelFromDomain(item))
+	}
+	return out, nil
+}
+
+func (h *Handler) getIntegration(ctx context.Context, input *integrationDetailInput) (*integrationResponse, error) {
+	item, err := h.service.GetIntegration(ctx, input.Authorization, input.IntegrationID)
+	if err != nil {
+		switch {
+		case errors.Is(err, app.ErrUnauthorized):
+			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrIntegrationNotFound):
+			return nil, huma.Error404NotFound("integration not found")
+		default:
+			return nil, huma.Error503ServiceUnavailable("integration unavailable")
+		}
+	}
+	return &integrationResponse{Body: integrationModelFromDomain(item)}, nil
+}
+
+func (h *Handler) createIntegration(ctx context.Context, input *createIntegrationInput) (*integrationResponse, error) {
+	item, err := h.service.CreateIntegration(ctx, input.Authorization, domainIntegrationFromModel(input.Body))
+	if err != nil {
+		switch {
+		case errors.Is(err, app.ErrUnauthorized):
+			return nil, huma.Error401Unauthorized("unauthorized")
+		default:
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+	}
+	return &integrationResponse{Body: integrationModelFromDomain(item)}, nil
+}
+
+func (h *Handler) updateIntegration(ctx context.Context, input *updateIntegrationInput) (*integrationResponse, error) {
+	item := domainIntegrationFromModel(input.Body)
+	item.ID = input.IntegrationID
+	updated, err := h.service.UpdateIntegration(ctx, input.Authorization, item)
+	if err != nil {
+		switch {
+		case errors.Is(err, app.ErrUnauthorized):
+			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrIntegrationNotFound):
+			return nil, huma.Error404NotFound("integration not found")
+		default:
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+	}
+	return &integrationResponse{Body: integrationModelFromDomain(updated)}, nil
+}
+
+func (h *Handler) deleteIntegration(ctx context.Context, input *deleteIntegrationInput) (*deleteEntityOutput, error) {
+	if err := h.service.DeleteIntegration(ctx, input.Authorization, input.IntegrationID); err != nil {
+		switch {
+		case errors.Is(err, app.ErrUnauthorized):
+			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrIntegrationNotFound):
+			return nil, huma.Error404NotFound("integration not found")
+		default:
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+	}
+	out := &deleteEntityOutput{}
+	out.Body.Deleted = true
+	return out, nil
+}
+
+func (h *Handler) listDestinations(ctx context.Context, input *listDestinationsInput) (*destinationsResponse, error) {
+	items, err := h.service.ListDestinations(ctx, input.Authorization)
+	if err != nil {
+		switch {
+		case errors.Is(err, app.ErrUnauthorized):
+			return nil, huma.Error401Unauthorized("unauthorized")
+		default:
+			return nil, huma.Error503ServiceUnavailable("destinations unavailable")
+		}
+	}
+	out := &destinationsResponse{}
+	out.Body.Items = make([]destinationConfigModel, 0, len(items))
+	for _, item := range items {
+		out.Body.Items = append(out.Body.Items, destinationModelFromDomain(item))
+	}
+	return out, nil
+}
+
+func (h *Handler) getDestination(ctx context.Context, input *destinationDetailInput) (*destinationResponse, error) {
+	item, err := h.service.GetDestination(ctx, input.Authorization, input.DestinationID)
+	if err != nil {
+		switch {
+		case errors.Is(err, app.ErrUnauthorized):
+			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrDestinationNotFound):
+			return nil, huma.Error404NotFound("destination not found")
+		default:
+			return nil, huma.Error503ServiceUnavailable("destination unavailable")
+		}
+	}
+	return &destinationResponse{Body: destinationModelFromDomain(item)}, nil
+}
+
+func (h *Handler) createDestination(ctx context.Context, input *createDestinationInput) (*destinationResponse, error) {
+	item, err := h.service.CreateDestination(ctx, input.Authorization, domainDestinationFromModel(input.Body))
+	if err != nil {
+		switch {
+		case errors.Is(err, app.ErrUnauthorized):
+			return nil, huma.Error401Unauthorized("unauthorized")
+		default:
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+	}
+	return &destinationResponse{Body: destinationModelFromDomain(item)}, nil
+}
+
+func (h *Handler) updateDestination(ctx context.Context, input *updateDestinationInput) (*destinationResponse, error) {
+	item := domainDestinationFromModel(input.Body)
+	item.ID = input.DestinationID
+	updated, err := h.service.UpdateDestination(ctx, input.Authorization, item)
+	if err != nil {
+		switch {
+		case errors.Is(err, app.ErrUnauthorized):
+			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrDestinationNotFound):
+			return nil, huma.Error404NotFound("destination not found")
+		default:
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+	}
+	return &destinationResponse{Body: destinationModelFromDomain(updated)}, nil
+}
+
+func (h *Handler) deleteDestination(ctx context.Context, input *deleteDestinationInput) (*deleteEntityOutput, error) {
+	if err := h.service.DeleteDestination(ctx, input.Authorization, input.DestinationID); err != nil {
+		switch {
+		case errors.Is(err, app.ErrUnauthorized):
+			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrDestinationNotFound):
+			return nil, huma.Error404NotFound("destination not found")
+		default:
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+	}
+	out := &deleteEntityOutput{}
+	out.Body.Deleted = true
+	return out, nil
+}
+
 func (h *Handler) listRoutes(ctx context.Context, input *listRoutesInput) (*routesResponse, error) {
 	routes, err := h.service.ListRoutes(ctx, input.Authorization)
 	if err != nil {

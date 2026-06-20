@@ -229,6 +229,28 @@ type Destination struct {
 	Profile string
 }
 
+type ManagedIntegration struct {
+	ID           string
+	Source       Source
+	Secret       string
+	ClientSecret string
+	ReplayWindow time.Duration
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+type ManagedDestination struct {
+	ID         string
+	Type       DestinationType
+	WebhookURL string
+	BotToken   string
+	ChatID     string
+	APIBaseURL string
+	Profile    string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
 type AttemptResult struct {
 	DeliveryID        string
 	WorkerID          string
