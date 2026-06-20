@@ -8,6 +8,16 @@ import (
 	"github.com/fanboykun/webhook-hub/internal/domain"
 )
 
+const testEncryptionKeyEnv = "GATEWAY_ENCRYPTION_KEY"
+const testEncryptionKeyValue = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+
+func testDatabaseConfig() DatabaseConfig {
+	return DatabaseConfig{
+		Path:             "gateway.db",
+		EncryptionKeyEnv: testEncryptionKeyEnv,
+	}
+}
+
 func TestDefaultPathPrefersLocalConfig(t *testing.T) {
 	t.Setenv("GATEWAY_CONFIG", "")
 
@@ -95,10 +105,11 @@ func TestDefaultPathReturnsLocalNameWhenNoConfigExists(t *testing.T) {
 
 func TestResolveSecretsRequiresWatcherWhsecPrefix(t *testing.T) {
 	t.Setenv("WATCHER_WEBHOOK_SECRET", "not-prefixed")
+	t.Setenv(testEncryptionKeyEnv, testEncryptionKeyValue)
 
 	cfg := Config{
 		Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
-		Database: DatabaseConfig{Path: "gateway.db"},
+		Database: testDatabaseConfig(),
 		Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
 		Retry:    RetryConfig{MaxAttempts: 1},
 		Integrations: map[string]IntegrationConfig{
@@ -116,10 +127,11 @@ func TestResolveSecretsRequiresWatcherWhsecPrefix(t *testing.T) {
 
 func TestResolveSecretsAcceptsWatcherWhsecPrefix(t *testing.T) {
 	t.Setenv("WATCHER_WEBHOOK_SECRET", "whsec_c2VjcmV0")
+	t.Setenv(testEncryptionKeyEnv, testEncryptionKeyValue)
 
 	cfg := Config{
 		Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
-		Database: DatabaseConfig{Path: "gateway.db"},
+		Database: testDatabaseConfig(),
 		Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
 		Retry:    RetryConfig{MaxAttempts: 1},
 		Integrations: map[string]IntegrationConfig{
@@ -141,7 +153,7 @@ func TestResolveSecretsAcceptsWatcherWhsecPrefix(t *testing.T) {
 func TestValidateAcceptsTelegramGroupChatID(t *testing.T) {
 	cfg := Config{
 		Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
-		Database: DatabaseConfig{Path: "gateway.db"},
+		Database: testDatabaseConfig(),
 		Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
 		Retry:    RetryConfig{MaxAttempts: 1},
 		Destinations: map[string]DestinationConfig{
@@ -161,7 +173,7 @@ func TestValidateAcceptsTelegramGroupChatID(t *testing.T) {
 func TestValidateRejectsInvalidTelegramChatID(t *testing.T) {
 	cfg := Config{
 		Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
-		Database: DatabaseConfig{Path: "gateway.db"},
+		Database: testDatabaseConfig(),
 		Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
 		Retry:    RetryConfig{MaxAttempts: 1},
 		Destinations: map[string]DestinationConfig{
@@ -188,7 +200,7 @@ func TestValidateRendererProfiles(t *testing.T) {
 			name: "valid config with profile",
 			cfg: Config{
 				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
-				Database: DatabaseConfig{Path: "gateway.db"},
+				Database: testDatabaseConfig(),
 				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
 				Retry:    RetryConfig{MaxAttempts: 1},
 				Destinations: map[string]DestinationConfig{
@@ -224,7 +236,7 @@ func TestValidateRendererProfiles(t *testing.T) {
 			name: "invalid template syntax",
 			cfg: Config{
 				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
-				Database: DatabaseConfig{Path: "gateway.db"},
+				Database: testDatabaseConfig(),
 				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
 				Retry:    RetryConfig{MaxAttempts: 1},
 				RendererProfiles: map[string]ProfileConfig{
@@ -245,7 +257,7 @@ func TestValidateRendererProfiles(t *testing.T) {
 			name: "invalid template field",
 			cfg: Config{
 				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
-				Database: DatabaseConfig{Path: "gateway.db"},
+				Database: testDatabaseConfig(),
 				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
 				Retry:    RetryConfig{MaxAttempts: 1},
 				RendererProfiles: map[string]ProfileConfig{
@@ -263,10 +275,10 @@ func TestValidateRendererProfiles(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "undefined profile reference",
+			name: "undefined profile reference falls back to built-in renderer",
 			cfg: Config{
 				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
-				Database: DatabaseConfig{Path: "gateway.db"},
+				Database: testDatabaseConfig(),
 				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
 				Retry:    RetryConfig{MaxAttempts: 1},
 				Destinations: map[string]DestinationConfig{
@@ -277,13 +289,13 @@ func TestValidateRendererProfiles(t *testing.T) {
 					},
 				},
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "unknown source name",
 			cfg: Config{
 				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
-				Database: DatabaseConfig{Path: "gateway.db"},
+				Database: testDatabaseConfig(),
 				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
 				Retry:    RetryConfig{MaxAttempts: 1},
 				RendererProfiles: map[string]ProfileConfig{
@@ -304,7 +316,7 @@ func TestValidateRendererProfiles(t *testing.T) {
 			name: "unknown event type override",
 			cfg: Config{
 				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
-				Database: DatabaseConfig{Path: "gateway.db"},
+				Database: testDatabaseConfig(),
 				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
 				Retry:    RetryConfig{MaxAttempts: 1},
 				RendererProfiles: map[string]ProfileConfig{

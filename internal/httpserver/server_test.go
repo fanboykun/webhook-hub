@@ -215,8 +215,29 @@ func TestOpenAPIIncludesWatcherWebhook(t *testing.T) {
 	if !bytes.Contains(body, []byte("/api/v1/receipts")) {
 		t.Fatalf("openapi missing receipt list path: %s", string(body))
 	}
+	if !bytes.Contains(body, []byte("/api/v1/renderer-profiles")) {
+		t.Fatalf("openapi missing renderer profile path: %s", string(body))
+	}
 	if !bytes.Contains(body, []byte(`"bearerAuth"`)) {
 		t.Fatalf("openapi missing bearer auth scheme: %s", string(body))
+	}
+	if !bytes.Contains(body, []byte(`"propertyName":"source"`)) {
+		t.Fatalf("openapi missing integration source discriminator: %s", string(body))
+	}
+	if !bytes.Contains(body, []byte(`"propertyName":"type"`)) {
+		t.Fatalf("openapi missing destination type discriminator: %s", string(body))
+	}
+	if !bytes.Contains(body, []byte(`"oneOf"`)) {
+		t.Fatalf("openapi missing oneOf union schemas: %s", string(body))
+	}
+	if !bytes.Contains(body, []byte(`#/components/schemas/WatcherIntegrationRequestModel`)) {
+		t.Fatalf("openapi missing watcher integration request schema ref: %s", string(body))
+	}
+	if !bytes.Contains(body, []byte(`#/components/schemas/GithubIntegrationRequestModel`)) {
+		t.Fatalf("openapi missing github integration request schema ref: %s", string(body))
+	}
+	if bytes.Contains(body, []byte(`"GithubIntegrationRequestModel":{"additionalProperties":false,"properties":{"id":{"type":"string"},"replay_window"`)) {
+		t.Fatalf("openapi should not expose replay_window on github integration request schema: %s", string(body))
 	}
 }
 
@@ -268,6 +289,20 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 		t.Fatalf("expected redacted integration secret, body=%s", rec.Body.String())
 	}
 
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/integrations?source=github", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("filtered integrations expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"source":"github"`) {
+		t.Fatalf("expected github integration in filtered list, body=%s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"source":"watcher"`) {
+		t.Fatalf("did not expect watcher integration in filtered list, body=%s", rec.Body.String())
+	}
+
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/integrations/github-main", nil)
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	rec = httptest.NewRecorder()
@@ -290,6 +325,42 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 		t.Fatalf("expected destination list to redact webhook url, body=%s", rec.Body.String())
 	}
 
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/destinations?type=slack", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("filtered destinations expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"type":"slack"`) {
+		t.Fatalf("expected slack destination in filtered list, body=%s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"type":"telegram"`) {
+		t.Fatalf("did not expect telegram destination in filtered list, body=%s", rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/renderer-profiles", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list renderer profiles expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"id":"detailed"`) {
+		t.Fatalf("expected renderer profile in list response, body=%s", rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/renderer-profiles/detailed", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get renderer profile expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"source":"watcher"`) {
+		t.Fatalf("expected renderer profile detail to include watcher source, body=%s", rec.Body.String())
+	}
+
 	updateIntegrationBody := []byte(`{"id":"github-main","source":"github","secret":"[REDACTED]"}`)
 	req = httptest.NewRequest(http.MethodPut, "/api/v1/integrations/github-main", bytes.NewReader(updateIntegrationBody))
 	req.Header.Set("Authorization", "Bearer admin-secret")
@@ -306,6 +377,24 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 	}
 	if integration.Secret != "github-secret" {
 		t.Fatalf("expected preserved integration secret, got %q", integration.Secret)
+	}
+
+	updateProfileBody := []byte(`{"id":"detailed","sources":[{"source":"watcher","default":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"},"telegram":{"text":"<b>{{.Title}}</b>"}}}]}`)
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/renderer-profiles/detailed", bytes.NewReader(updateProfileBody))
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update renderer profile expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	profile, err := store.GetRendererProfile(context.Background(), "detailed")
+	if err != nil {
+		t.Fatalf("get renderer profile failed: %v", err)
+	}
+	if profile.Profile["watcher"].Default.Telegram == nil {
+		t.Fatalf("expected updated renderer profile to persist telegram template, got %+v", profile.Profile)
 	}
 
 	updateBody := []byte(`{"id":"slack-deployments","type":"slack","webhook_url":"[REDACTED]","profile":"detailed"}`)
@@ -355,6 +444,16 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 		t.Fatalf("delete integration expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
+	createProfileBody := []byte(`{"id":"ops-compact","sources":[{"source":"watcher","default":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"}},"overrides":[{"event_type":"watcher.deployment.failed","templates":{"telegram":{"text":"<b>{{.Title}}</b>\n{{.Summary}}"}}}]}]}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/renderer-profiles", bytes.NewReader(createProfileBody))
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create renderer profile expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
 	createDestinationBody := []byte(`{"id":"telegram-ops","type":"telegram","bot_token":"bot-token","chat_id":"-100123456789","profile":"detailed"}`)
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/destinations", bytes.NewReader(createDestinationBody))
 	req.Header.Set("Authorization", "Bearer admin-secret")
@@ -390,6 +489,14 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 	server.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected route validation failure after destination delete, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/renderer-profiles/ops-compact", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete renderer profile expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -839,7 +946,7 @@ func newTestServer(t *testing.T, cfg config.Config, store *sqlite.Store, routes 
 	integrations := runtimeconfig.NewIntegrationRegistry(cfg.Integrations)
 	destinations := runtimeconfig.NewDestinationRegistry(cfg.Destinations)
 	service := ingress.NewService(store, cfg, testRegistry(), engine, integrations, destinations, clock.Real{}, observability.NewLogger(cfg.Logging))
-	appService := app.NewService(cfg, clock.Real{}, store, service, engine, integrations, destinations)
+	appService := app.NewService(cfg, clock.Real{}, store, service, engine, integrations, destinations, runtimeconfig.NewRendererProfileRegistry(cfg.RendererProfiles))
 	if routes != nil {
 		engine.Replace(routes)
 	}
@@ -852,7 +959,7 @@ func newEncryptedTestServer(t *testing.T, cfg config.Config, store *sqlite.Store
 	integrations := runtimeconfig.NewIntegrationRegistry(cfg.Integrations)
 	destinations := runtimeconfig.NewDestinationRegistry(cfg.Destinations)
 	service := ingress.NewService(store, cfg, testRegistry(), engine, integrations, destinations, clock.Real{}, observability.NewLogger(cfg.Logging))
-	appService := app.NewService(cfg, clock.Real{}, store, service, engine, integrations, destinations)
+	appService := app.NewService(cfg, clock.Real{}, store, service, engine, integrations, destinations, runtimeconfig.NewRendererProfileRegistry(cfg.RendererProfiles))
 	if err := appService.BootstrapDynamicConfig(context.Background()); err != nil {
 		t.Fatalf("bootstrap dynamic config: %v", err)
 	}

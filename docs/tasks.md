@@ -237,6 +237,8 @@ PRD: [Issue #1](https://github.com/fanboykun/webhook-hub/issues/1)
 
 Goal: make render output configurable per known source and known event type without turning the renderer into an unsafe free-form template engine.
 
+Current runtime note: renderer profiles are dynamically managed through the operational API and hot-reloaded from SQLite. If a destination references a profile that is later deleted or has no matching source or event override, delivery falls back to the built-in renderer instead of failing.
+
 Implementation issues tracked in GitHub:
 - [ ] Slice 1: Configuration Schema & Slack-only Configurable Renderer [Issue #2](https://github.com/fanboykun/webhook-hub/issues/2)
 - [ ] Slice 2: Telegram Support & Variable Escaping [Issue #3](https://github.com/fanboykun/webhook-hub/issues/3)
@@ -256,6 +258,7 @@ Tasks:
 - [ ] Create thread-safe, hot-reloaded in-memory registries for integrations and destinations.
 - [ ] Refactor Ingress service and Delivery service to resolve configurations from the dynamic registries.
 - [ ] Build Huma REST CRUD API endpoints for `/api/v1/integrations` and `/api/v1/destinations` with proper validation, secret masking (redaction), and update preservation.
+- [x] Build Huma REST CRUD API endpoints for `/api/v1/renderer-profiles` so destinations can reference managed renderer configuration.
 - [ ] Add unit and integration tests covering encryption, seeding, hot-reloading, and API endpoints.
 
 Acceptance criteria:
@@ -263,7 +266,7 @@ Acceptance criteria:
 - [ ] Webhook integrations and delivery destinations can be created, retrieved, updated, and deleted dynamically via the operational API.
 - [ ] Sensitive fields (bot tokens, webhook URLs, SMTP passwords) are stored encrypted in SQLite.
 - [ ] Sensitive fields are redacted as `"[REDACTED]"` in all retrieval API responses.
-- [ ] If `GATEWAY_ENCRYPTION_KEY` is missing or has invalid length (not 32 bytes), the gateway fails to start.
+- [ ] `database.encryption_key_env` must point to a present and valid master key (32 decoded bytes as hex or base64) because integrations/destinations are persisted as encrypted SQLite-backed dynamic configuration, including first-boot seeding from file config.
 
 ## Recommended First Build Slice
 

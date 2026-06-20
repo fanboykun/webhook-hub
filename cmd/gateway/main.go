@@ -32,7 +32,7 @@ func main() {
 	logger := observability.NewLogger(cfg.Logging)
 	apiLogger := logger.With("component", "api")
 	workerLogger := logger.With("component", "worker")
-	encryptionCipher, err := configcrypto.NewFromString(os.Getenv(configcrypto.EncryptionKeyEnv))
+	encryptionCipher, err := configcrypto.NewFromString(cfg.Database.ResolvedEncryptionKey)
 	if err != nil {
 		logger.Error("config.encryption_key_invalid", "error", err)
 		os.Exit(1)
@@ -47,6 +47,7 @@ func main() {
 	routeEngine := routing.New(nil)
 	integrationRegistry := runtimeconfig.NewIntegrationRegistry(nil)
 	destinationRegistry := runtimeconfig.NewDestinationRegistry(nil)
+	rendererProfileRegistry := runtimeconfig.NewRendererProfileRegistry(nil)
 
 	ingressService := ingress.NewService(
 		store,
@@ -61,9 +62,9 @@ func main() {
 		clock.Real{},
 		apiLogger,
 	)
-	deliveryService := delivery.NewService(store, cfg, destinationRegistry, clock.Real{}, workerLogger)
+	deliveryService := delivery.NewService(store, cfg, destinationRegistry, rendererProfileRegistry, clock.Real{}, workerLogger)
 	deliveryRunner := delivery.NewRunner(deliveryService)
-	appService := app.NewService(cfg, clock.Real{}, store, ingressService, routeEngine, integrationRegistry, destinationRegistry)
+	appService := app.NewService(cfg, clock.Real{}, store, ingressService, routeEngine, integrationRegistry, destinationRegistry, rendererProfileRegistry)
 	if err := appService.BootstrapDynamicConfig(context.Background()); err != nil {
 		logger.Error("dynamic_config.bootstrap_failed", "error", err)
 		os.Exit(1)

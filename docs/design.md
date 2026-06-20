@@ -1025,7 +1025,7 @@ type Renderer interface {
 }
 ```
 
-Version 1 renderers are code-defined. Avoid arbitrary runtime templates initially because they add runtime failures, escaping problems, and a configuration language that must be supported indefinitely.
+Version 1 keeps the built-in code-defined renderers as the durability baseline, and may layer optional profile-driven templates on top. Renderer profiles are dynamically managed through the operational API, persisted in SQLite, seeded once from file config when the table is empty, and hot-reloaded into the live delivery renderer registry. Template configuration is validated when present, but destinations must still fall back to the built-in renderer if no matching profile, source, or event-type template exists so delivery does not fail solely because renderer configuration has not been created yet.
 
 ### Slack
 
@@ -2203,7 +2203,7 @@ Chosen because no atomic transaction spans SQLite and external providers. The sy
 
 ### ADR-008: Dynamic Integrations and Destinations with SQLite Encryption
 
-Supercedes ADR-004. Chosen to allow operators to configure webhook integration endpoints (Watcher, GitHub, Grafana, Sentry) and delivery destinations (Slack, Telegram, Email) dynamically via REST API endpoints without restarting the gateway process. Provider secrets, such as Slack webhooks and Telegram bot tokens, are encrypted in SQLite using AES-256-GCM. A master encryption key (`GATEWAY_ENCRYPTION_KEY`) must be supplied at startup. Hot-reloaded in-memory registries cache the configurations to keep webhook ingestion and background delivery performance high and avoid continuous SQLite lookups.
+Supercedes ADR-004. Chosen to allow operators to configure webhook integration endpoints (Watcher, GitHub, Grafana, Sentry) and delivery destinations (Slack, Telegram, Email) dynamically via REST API endpoints without restarting the gateway process. Provider secrets, such as Slack webhooks and Telegram bot tokens, are encrypted in SQLite using AES-256-GCM. The config schema carries an env-var reference for the master encryption key, and that referenced value is required at startup because file-configured integrations/destinations are seed input for the encrypted SQLite-backed dynamic configuration model. Hot-reloaded in-memory registries cache the configurations to keep webhook ingestion and background delivery performance high and avoid continuous SQLite lookups.
 
 ---
 

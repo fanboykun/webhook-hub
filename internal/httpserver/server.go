@@ -84,7 +84,8 @@ func scalarDocsHTML(title, openAPIPath string) string {
     <script>
       Scalar.createApiReference('#app', {
         url: '%s',
-        persistAuth: true
+        persistAuth: true,
+		showOperationId: true
       })
     </script>
   </body>

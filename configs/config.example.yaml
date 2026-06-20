@@ -21,6 +21,9 @@ logging:
 
 database:
   path: ./data/gateway.db
+  # Committed example uses an environment-variable reference.
+  # Example actual env value: export GATEWAY_ENCRYPTION_KEY="$(make gen-encryption-key)"
+  encryption_key_env: GATEWAY_ENCRYPTION_KEY
   busy_timeout: 5s
   max_open_connections: 1
   retain_raw_payloads: true
@@ -59,3 +62,30 @@ destinations:
     bot_token_env: TELEGRAM_ONCALL_BOT_TOKEN
     chat_id: "-100123456789"
     profile: compact
+
+renderer_profiles:
+  detailed:
+    watcher:
+      default:
+        slack:
+          title: "[{{.Severity}}] {{.Title}}"
+          body: "*Service:* {{.Service}}\n*Environment:* {{.Environment}}\n*Release:* {{.Release}}\n*Summary:* {{.Summary}}"
+        telegram:
+          text: "<b>[{{.Severity}}] {{.Title}}</b>\nService: <code>{{.Service}}</code>\nEnvironment: <b>{{.Environment}}</b>\nRelease: <code>{{.Release}}</code>\nSummary: <i>{{.Summary}}</i>"
+    github:
+      default:
+        slack:
+          title: "[{{.Severity}}] {{.Title}}"
+          body: "*Actor:* {{.Actor}}\n*Summary:* {{.Summary}}\n*URL:* {{.URL}}"
+        telegram:
+          text: "<b>[{{.Severity}}] {{.Title}}</b>\nActor: <code>{{.Actor}}</code>\nSummary: <i>{{.Summary}}</i>\n<a href=\"{{.URL}}\">Open event</a>"
+
+  compact:
+    watcher:
+      default:
+        telegram:
+          text: "<b>{{.Title}}</b>\n{{.Summary}}"
+    github:
+      default:
+        telegram:
+          text: "<b>{{.Title}}</b>\n{{.Summary}}"

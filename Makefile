@@ -19,7 +19,7 @@ GATEWAY_ADMIN_TOKEN ?= dev-admin-token
 
 GO_FILES := $(shell $(RG) --files -g '*.go')
 
-.PHONY: help fmt test build run dev check clean
+.PHONY: help fmt test build run dev check clean gen-token gen-encryption-key
 
 help:
 	@printf "Available targets:\n"
@@ -28,7 +28,8 @@ help:
 	@printf "  make build    Build ./cmd/gateway to $(BIN_PATH)\n"
 	@printf "  make run      Run the gateway with local default env\n"
 	@printf "  make dev      Run Air hot reload with config $(AIR_CONFIG)\n"
-	@printf "  make gen-token Generate a random admin token or shared secret\n"
+	@printf "  make gen-token Generate a random 32-byte hex token for admin/shared secrets\n"
+	@printf "  make gen-encryption-key Generate a 32-byte hex key for GATEWAY_ENCRYPTION_KEY\n"
 	@printf "  make check    Run fmt check, tests, and build\n"
 	@printf "  make clean    Remove local build artifacts\n"
 
@@ -57,6 +58,9 @@ dev:
 	$(AIR) -c $(AIR_CONFIG)
 
 gen-token:
+	@openssl rand -hex 32
+
+gen-encryption-key:
 	@openssl rand -hex 32
 
 check:

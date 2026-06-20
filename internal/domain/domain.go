@@ -251,6 +251,40 @@ type ManagedDestination struct {
 	UpdatedAt  time.Time
 }
 
+type RendererProfile map[string]RendererSourceConfig
+
+type RendererSourceConfig struct {
+	Default   RendererDestinationTemplates            `json:"default"`
+	Overrides map[string]RendererDestinationTemplates `json:"overrides,omitempty"`
+}
+
+type RendererDestinationTemplates struct {
+	Slack    *SlackTemplate    `json:"slack,omitempty"`
+	Telegram *TelegramTemplate `json:"telegram,omitempty"`
+	Email    *EmailTemplate    `json:"email,omitempty"`
+}
+
+type SlackTemplate struct {
+	Title string `json:"title,omitempty"`
+	Body  string `json:"body,omitempty"`
+}
+
+type TelegramTemplate struct {
+	Text string `json:"text,omitempty"`
+}
+
+type EmailTemplate struct {
+	Subject string `json:"subject,omitempty"`
+	Body    string `json:"body,omitempty"`
+}
+
+type ManagedRendererProfile struct {
+	ID        string
+	Profile   RendererProfile
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 type AttemptResult struct {
 	DeliveryID        string
 	WorkerID          string

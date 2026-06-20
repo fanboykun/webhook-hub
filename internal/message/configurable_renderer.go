@@ -12,15 +12,16 @@ import (
 	"github.com/fanboykun/webhook-hub/internal/domain"
 	slackrender "github.com/fanboykun/webhook-hub/internal/message/slack"
 	telegramrender "github.com/fanboykun/webhook-hub/internal/message/telegram"
+	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
 )
 
 type ConfigurableRenderer struct {
-	profiles         map[string]config.ProfileConfig
+	profiles         *runtimeconfig.RendererProfileRegistry
 	slackFallback    Renderer
 	telegramFallback Renderer
 }
 
-func NewConfigurableRenderer(profiles map[string]config.ProfileConfig, slackFallback Renderer, telegramFallback Renderer) *ConfigurableRenderer {
+func NewConfigurableRenderer(profiles *runtimeconfig.RendererProfileRegistry, slackFallback Renderer, telegramFallback Renderer) *ConfigurableRenderer {
 	if slackFallback == nil {
 		slackFallback = slackrender.NewRenderer()
 	}
@@ -38,8 +39,11 @@ func (r *ConfigurableRenderer) Render(ctx context.Context, event domain.Event, d
 	if destination.Profile == "" {
 		return r.fallback(ctx, event, destination)
 	}
+	if r.profiles == nil {
+		return r.fallback(ctx, event, destination)
+	}
 
-	profile, ok := r.profiles[destination.Profile]
+	profile, ok := r.profiles.Get(destination.Profile)
 	if !ok {
 		return r.fallback(ctx, event, destination)
 	}

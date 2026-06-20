@@ -135,7 +135,7 @@ func (h *Handler) getReceipt(ctx context.Context, input *receiptDetailInput) (*r
 
 	out := &receiptResponse{}
 	out.Body.ID = receipt.Receipt.ID
-	out.Body.Source = string(receipt.Receipt.Source)
+	out.Body.Source = routeSource(receipt.Receipt.Source)
 	out.Body.IntegrationID = receipt.Receipt.IntegrationID
 	out.Body.SourceDeliveryID = receipt.Receipt.SourceDeliveryID
 	out.Body.SourceEventType = receipt.Receipt.SourceEventType
@@ -253,11 +253,13 @@ func (h *Handler) retryDelivery(ctx context.Context, input *retryDeliveryInput) 
 }
 
 func (h *Handler) listIntegrations(ctx context.Context, input *listIntegrationsInput) (*integrationsResponse, error) {
-	items, err := h.service.ListIntegrations(ctx, input.Authorization)
+	items, err := h.service.ListIntegrations(ctx, input.Authorization, domain.Source(input.Source))
 	if err != nil {
 		switch {
 		case errors.Is(err, app.ErrUnauthorized):
 			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrDynamicConfigUnavailable):
+			return nil, huma.Error503ServiceUnavailable("integrations unavailable")
 		default:
 			return nil, huma.Error503ServiceUnavailable("integrations unavailable")
 		}
@@ -276,6 +278,8 @@ func (h *Handler) getIntegration(ctx context.Context, input *integrationDetailIn
 		switch {
 		case errors.Is(err, app.ErrUnauthorized):
 			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrDynamicConfigUnavailable):
+			return nil, huma.Error503ServiceUnavailable("integration unavailable")
 		case errors.Is(err, app.ErrIntegrationNotFound):
 			return nil, huma.Error404NotFound("integration not found")
 		default:
@@ -286,11 +290,13 @@ func (h *Handler) getIntegration(ctx context.Context, input *integrationDetailIn
 }
 
 func (h *Handler) createIntegration(ctx context.Context, input *createIntegrationInput) (*integrationResponse, error) {
-	item, err := h.service.CreateIntegration(ctx, input.Authorization, domainIntegrationFromModel(input.Body))
+	item, err := h.service.CreateIntegration(ctx, input.Authorization, domainIntegrationFromRequestModel(input.Body))
 	if err != nil {
 		switch {
 		case errors.Is(err, app.ErrUnauthorized):
 			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrDynamicConfigUnavailable):
+			return nil, huma.Error503ServiceUnavailable("integrations unavailable")
 		default:
 			return nil, huma.Error400BadRequest(err.Error())
 		}
@@ -299,13 +305,15 @@ func (h *Handler) createIntegration(ctx context.Context, input *createIntegratio
 }
 
 func (h *Handler) updateIntegration(ctx context.Context, input *updateIntegrationInput) (*integrationResponse, error) {
-	item := domainIntegrationFromModel(input.Body)
+	item := domainIntegrationFromRequestModel(input.Body)
 	item.ID = input.IntegrationID
 	updated, err := h.service.UpdateIntegration(ctx, input.Authorization, item)
 	if err != nil {
 		switch {
 		case errors.Is(err, app.ErrUnauthorized):
 			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrDynamicConfigUnavailable):
+			return nil, huma.Error503ServiceUnavailable("integration unavailable")
 		case errors.Is(err, app.ErrIntegrationNotFound):
 			return nil, huma.Error404NotFound("integration not found")
 		default:
@@ -320,6 +328,8 @@ func (h *Handler) deleteIntegration(ctx context.Context, input *deleteIntegratio
 		switch {
 		case errors.Is(err, app.ErrUnauthorized):
 			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrDynamicConfigUnavailable):
+			return nil, huma.Error503ServiceUnavailable("integration unavailable")
 		case errors.Is(err, app.ErrIntegrationNotFound):
 			return nil, huma.Error404NotFound("integration not found")
 		default:
@@ -332,11 +342,13 @@ func (h *Handler) deleteIntegration(ctx context.Context, input *deleteIntegratio
 }
 
 func (h *Handler) listDestinations(ctx context.Context, input *listDestinationsInput) (*destinationsResponse, error) {
-	items, err := h.service.ListDestinations(ctx, input.Authorization)
+	items, err := h.service.ListDestinations(ctx, input.Authorization, domain.DestinationType(input.Type))
 	if err != nil {
 		switch {
 		case errors.Is(err, app.ErrUnauthorized):
 			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrDynamicConfigUnavailable):
+			return nil, huma.Error503ServiceUnavailable("destinations unavailable")
 		default:
 			return nil, huma.Error503ServiceUnavailable("destinations unavailable")
 		}
@@ -355,6 +367,8 @@ func (h *Handler) getDestination(ctx context.Context, input *destinationDetailIn
 		switch {
 		case errors.Is(err, app.ErrUnauthorized):
 			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrDynamicConfigUnavailable):
+			return nil, huma.Error503ServiceUnavailable("destination unavailable")
 		case errors.Is(err, app.ErrDestinationNotFound):
 			return nil, huma.Error404NotFound("destination not found")
 		default:
@@ -365,11 +379,13 @@ func (h *Handler) getDestination(ctx context.Context, input *destinationDetailIn
 }
 
 func (h *Handler) createDestination(ctx context.Context, input *createDestinationInput) (*destinationResponse, error) {
-	item, err := h.service.CreateDestination(ctx, input.Authorization, domainDestinationFromModel(input.Body))
+	item, err := h.service.CreateDestination(ctx, input.Authorization, domainDestinationFromRequestModel(input.Body))
 	if err != nil {
 		switch {
 		case errors.Is(err, app.ErrUnauthorized):
 			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrDynamicConfigUnavailable):
+			return nil, huma.Error503ServiceUnavailable("destinations unavailable")
 		default:
 			return nil, huma.Error400BadRequest(err.Error())
 		}
@@ -378,13 +394,15 @@ func (h *Handler) createDestination(ctx context.Context, input *createDestinatio
 }
 
 func (h *Handler) updateDestination(ctx context.Context, input *updateDestinationInput) (*destinationResponse, error) {
-	item := domainDestinationFromModel(input.Body)
+	item := domainDestinationFromRequestModel(input.Body)
 	item.ID = input.DestinationID
 	updated, err := h.service.UpdateDestination(ctx, input.Authorization, item)
 	if err != nil {
 		switch {
 		case errors.Is(err, app.ErrUnauthorized):
 			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrDynamicConfigUnavailable):
+			return nil, huma.Error503ServiceUnavailable("destination unavailable")
 		case errors.Is(err, app.ErrDestinationNotFound):
 			return nil, huma.Error404NotFound("destination not found")
 		default:
@@ -399,8 +417,96 @@ func (h *Handler) deleteDestination(ctx context.Context, input *deleteDestinatio
 		switch {
 		case errors.Is(err, app.ErrUnauthorized):
 			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrDynamicConfigUnavailable):
+			return nil, huma.Error503ServiceUnavailable("destination unavailable")
 		case errors.Is(err, app.ErrDestinationNotFound):
 			return nil, huma.Error404NotFound("destination not found")
+		default:
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+	}
+	out := &deleteEntityOutput{}
+	out.Body.Deleted = true
+	return out, nil
+}
+
+func (h *Handler) listRendererProfiles(ctx context.Context, input *listRendererProfilesInput) (*rendererProfilesResponse, error) {
+	items, err := h.service.ListRendererProfiles(ctx, input.Authorization)
+	if err != nil {
+		switch {
+		case errors.Is(err, app.ErrUnauthorized):
+			return nil, huma.Error401Unauthorized("unauthorized")
+		default:
+			return nil, huma.Error503ServiceUnavailable("renderer profiles unavailable")
+		}
+	}
+	out := &rendererProfilesResponse{}
+	out.Body.Items = make([]rendererProfileModel, 0, len(items))
+	for _, item := range items {
+		out.Body.Items = append(out.Body.Items, rendererProfileModelFromDomain(item))
+	}
+	return out, nil
+}
+
+func (h *Handler) getRendererProfile(ctx context.Context, input *rendererProfileDetailInput) (*rendererProfileResponse, error) {
+	item, err := h.service.GetRendererProfile(ctx, input.Authorization, input.ProfileID)
+	if err != nil {
+		switch {
+		case errors.Is(err, app.ErrUnauthorized):
+			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrRendererProfileNotFound):
+			return nil, huma.Error404NotFound("renderer profile not found")
+		default:
+			return nil, huma.Error503ServiceUnavailable("renderer profile unavailable")
+		}
+	}
+	return &rendererProfileResponse{Body: rendererProfileModelFromDomain(item)}, nil
+}
+
+func (h *Handler) createRendererProfile(ctx context.Context, input *createRendererProfileInput) (*rendererProfileResponse, error) {
+	item, err := domainRendererProfileFromRequestModel(input.Body)
+	if err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	created, err := h.service.CreateRendererProfile(ctx, input.Authorization, item)
+	if err != nil {
+		switch {
+		case errors.Is(err, app.ErrUnauthorized):
+			return nil, huma.Error401Unauthorized("unauthorized")
+		default:
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+	}
+	return &rendererProfileResponse{Body: rendererProfileModelFromDomain(created)}, nil
+}
+
+func (h *Handler) updateRendererProfile(ctx context.Context, input *updateRendererProfileInput) (*rendererProfileResponse, error) {
+	item, err := domainRendererProfileFromRequestModel(input.Body)
+	if err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	item.ID = input.ProfileID
+	updated, err := h.service.UpdateRendererProfile(ctx, input.Authorization, item)
+	if err != nil {
+		switch {
+		case errors.Is(err, app.ErrUnauthorized):
+			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrRendererProfileNotFound):
+			return nil, huma.Error404NotFound("renderer profile not found")
+		default:
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+	}
+	return &rendererProfileResponse{Body: rendererProfileModelFromDomain(updated)}, nil
+}
+
+func (h *Handler) deleteRendererProfile(ctx context.Context, input *deleteRendererProfileInput) (*deleteEntityOutput, error) {
+	if err := h.service.DeleteRendererProfile(ctx, input.Authorization, input.ProfileID); err != nil {
+		switch {
+		case errors.Is(err, app.ErrUnauthorized):
+			return nil, huma.Error401Unauthorized("unauthorized")
+		case errors.Is(err, app.ErrRendererProfileNotFound):
+			return nil, huma.Error404NotFound("renderer profile not found")
 		default:
 			return nil, huma.Error400BadRequest(err.Error())
 		}

@@ -108,3 +108,14 @@ type destinationModel struct {
 func (destinationModel) TableName() string {
 	return "destinations"
 }
+
+type rendererProfileModel struct {
+	ID          string `gorm:"primaryKey"`
+	ProfileJSON []byte
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+func (rendererProfileModel) TableName() string {
+	return "renderer_profiles"
+}

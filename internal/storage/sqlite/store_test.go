@@ -132,6 +132,77 @@ func TestRouteCRUD(t *testing.T) {
 	}
 }
 
+func TestRendererProfileCRUD(t *testing.T) {
+	store := openTestStore(t)
+	now := time.Now().UTC()
+
+	profile := domain.ManagedRendererProfile{
+		ID: "detailed",
+		Profile: domain.RendererProfile{
+			"watcher": {
+				Default: domain.RendererDestinationTemplates{
+					Slack: &domain.SlackTemplate{
+						Title: "{{.Title}}",
+						Body:  "{{.Summary}}",
+					},
+				},
+			},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if err := store.CreateRendererProfile(context.Background(), profile); err != nil {
+		t.Fatalf("create renderer profile failed: %v", err)
+	}
+
+	listed, err := store.ListRendererProfiles(context.Background())
+	if err != nil {
+		t.Fatalf("list renderer profiles failed: %v", err)
+	}
+	if len(listed) != 1 || listed[0].ID != profile.ID {
+		t.Fatalf("unexpected listed renderer profiles: %+v", listed)
+	}
+
+	got, err := store.GetRendererProfile(context.Background(), profile.ID)
+	if err != nil {
+		t.Fatalf("get renderer profile failed: %v", err)
+	}
+	if got.Profile["watcher"].Default.Slack == nil {
+		t.Fatalf("expected slack template in stored profile, got %+v", got.Profile)
+	}
+
+	profile.Profile["watcher"] = domain.RendererSourceConfig{
+		Default: domain.RendererDestinationTemplates{
+			Telegram: &domain.TelegramTemplate{Text: "<b>{{.Title}}</b>"},
+		},
+	}
+	profile.UpdatedAt = now.Add(time.Minute)
+	if err := store.UpdateRendererProfile(context.Background(), profile); err != nil {
+		t.Fatalf("update renderer profile failed: %v", err)
+	}
+
+	updated, err := store.GetRendererProfile(context.Background(), profile.ID)
+	if err != nil {
+		t.Fatalf("get updated renderer profile failed: %v", err)
+	}
+	if updated.Profile["watcher"].Default.Telegram == nil {
+		t.Fatalf("expected telegram template after update, got %+v", updated.Profile)
+	}
+
+	if err := store.DeleteRendererProfile(context.Background(), profile.ID); err != nil {
+		t.Fatalf("delete renderer profile failed: %v", err)
+	}
+
+	remaining, err := store.ListRendererProfiles(context.Background())
+	if err != nil {
+		t.Fatalf("list remaining renderer profiles failed: %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("expected no renderer profiles, got %+v", remaining)
+	}
+}
+
 func TestGetEventAndDeliveryAndRetry(t *testing.T) {
 	store := openTestStore(t)
 	now := time.Now().UTC()

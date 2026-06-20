@@ -74,7 +74,7 @@ func TestProcessOnceSent(t *testing.T) {
 		t.Fatalf("seed ingest: %v", err)
 	}
 
-	service := NewService(store, cfg, runtimeconfig.NewDestinationRegistry(cfg.Destinations), clock.Real{}, observability.NewLogger(cfg.Logging))
+	service := NewService(store, cfg, runtimeconfig.NewDestinationRegistry(cfg.Destinations), runtimeconfig.NewRendererProfileRegistry(cfg.RendererProfiles), clock.Real{}, observability.NewLogger(cfg.Logging))
 	claimed, err := service.ProcessOnce(context.Background(), "worker-1")
 	if err != nil {
 		t.Fatalf("process once: %v", err)
@@ -146,7 +146,7 @@ func TestProcessOnceTelegramSent(t *testing.T) {
 		t.Fatalf("seed ingest: %v", err)
 	}
 
-	service := NewService(store, cfg, runtimeconfig.NewDestinationRegistry(cfg.Destinations), clock.Real{}, observability.NewLogger(cfg.Logging))
+	service := NewService(store, cfg, runtimeconfig.NewDestinationRegistry(cfg.Destinations), runtimeconfig.NewRendererProfileRegistry(cfg.RendererProfiles), clock.Real{}, observability.NewLogger(cfg.Logging))
 	claimed, err := service.ProcessOnce(context.Background(), "worker-1")
 	if err != nil {
 		t.Fatalf("process once: %v", err)
@@ -239,7 +239,7 @@ func TestProcessOnceUsesHotReloadedDestinationRegistry(t *testing.T) {
 		},
 	})
 
-	service := NewService(store, cfg, registry, clock.Real{}, observability.NewLogger(cfg.Logging))
+	service := NewService(store, cfg, registry, runtimeconfig.NewRendererProfileRegistry(cfg.RendererProfiles), clock.Real{}, observability.NewLogger(cfg.Logging))
 	if _, err := service.ProcessOnce(context.Background(), "worker-1"); err != nil {
 		t.Fatalf("process once: %v", err)
 	}

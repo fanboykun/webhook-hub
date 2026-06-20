@@ -14,16 +14,19 @@ import (
 	"github.com/fanboykun/webhook-hub/internal/ingress"
 	"github.com/fanboykun/webhook-hub/internal/routing"
 	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
+	"github.com/fanboykun/webhook-hub/internal/storage/sqlite"
 	"gorm.io/gorm"
 )
 
 var (
-	ErrUnauthorized        = errors.New("admin unauthorized")
-	ErrRouteNotFound       = errors.New("route not found")
-	ErrDeliveryNotFound    = errors.New("delivery not found")
-	ErrReceiptNotFound     = errors.New("receipt not found")
-	ErrIntegrationNotFound = errors.New("integration not found")
-	ErrDestinationNotFound = errors.New("destination not found")
+	ErrUnauthorized             = errors.New("admin unauthorized")
+	ErrRouteNotFound            = errors.New("route not found")
+	ErrDeliveryNotFound         = errors.New("delivery not found")
+	ErrReceiptNotFound          = errors.New("receipt not found")
+	ErrIntegrationNotFound      = errors.New("integration not found")
+	ErrDestinationNotFound      = errors.New("destination not found")
+	ErrRendererProfileNotFound  = errors.New("renderer profile not found")
+	ErrDynamicConfigUnavailable = errors.New("dynamic config encryption is not configured")
 )
 
 type Store interface {
@@ -37,6 +40,11 @@ type Store interface {
 	CreateDestination(ctx context.Context, destination domain.ManagedDestination) error
 	UpdateDestination(ctx context.Context, destination domain.ManagedDestination) error
 	DeleteDestination(ctx context.Context, id string) error
+	ListRendererProfiles(ctx context.Context) ([]domain.ManagedRendererProfile, error)
+	GetRendererProfile(ctx context.Context, id string) (domain.ManagedRendererProfile, error)
+	CreateRendererProfile(ctx context.Context, profile domain.ManagedRendererProfile) error
+	UpdateRendererProfile(ctx context.Context, profile domain.ManagedRendererProfile) error
+	DeleteRendererProfile(ctx context.Context, id string) error
 	ListRoutes(ctx context.Context) ([]domain.Route, error)
 	GetRoute(ctx context.Context, id string) (domain.Route, error)
 	CreateRoute(ctx context.Context, route domain.Route) error
@@ -63,9 +71,10 @@ type Service struct {
 	router       *routing.Engine
 	integrations *runtimeconfig.IntegrationRegistry
 	destinations *runtimeconfig.DestinationRegistry
+	profiles     *runtimeconfig.RendererProfileRegistry
 }
 
-func NewService(cfg config.Config, clk clock.Clock, store Store, webhook WebhookService, router *routing.Engine, integrations *runtimeconfig.IntegrationRegistry, destinations *runtimeconfig.DestinationRegistry) *Service {
+func NewService(cfg config.Config, clk clock.Clock, store Store, webhook WebhookService, router *routing.Engine, integrations *runtimeconfig.IntegrationRegistry, destinations *runtimeconfig.DestinationRegistry, profiles *runtimeconfig.RendererProfileRegistry) *Service {
 	return &Service{
 		cfg:          cfg,
 		clock:        clk,
@@ -74,6 +83,7 @@ func NewService(cfg config.Config, clk clock.Clock, store Store, webhook Webhook
 		router:       router,
 		integrations: integrations,
 		destinations: destinations,
+		profiles:     profiles,
 	}
 }
 
@@ -108,6 +118,20 @@ func (s *Service) BootstrapDynamicConfig(ctx context.Context) error {
 		}
 	}
 
+	profiles, err := s.store.ListRendererProfiles(ctx)
+	if err != nil {
+		return err
+	}
+	if len(profiles) == 0 {
+		for _, profile := range runtimeconfig.StaticRendererProfiles(s.cfg) {
+			profile.CreatedAt = now
+			profile.UpdatedAt = now
+			if err := s.store.CreateRendererProfile(ctx, profile); err != nil {
+				return err
+			}
+		}
+	}
+
 	return s.ReloadDynamicConfig(ctx)
 }
 
@@ -120,13 +144,27 @@ func (s *Service) ReloadDynamicConfig(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	profiles, err := s.store.ListRendererProfiles(ctx)
+	if err != nil {
+		return err
+	}
 	if s.integrations != nil {
 		s.integrations.Replace(runtimeconfig.MapIntegrations(integrations))
 	}
 	if s.destinations != nil {
 		s.destinations.Replace(runtimeconfig.MapDestinations(destinations))
 	}
+	if s.profiles != nil {
+		s.profiles.Replace(runtimeconfig.MapRendererProfiles(profiles))
+	}
 	return nil
+}
+
+func normalizeDynamicConfigErr(err error) error {
+	if errors.Is(err, sqlite.ErrEncryptionUnavailable) {
+		return ErrDynamicConfigUnavailable
+	}
+	return err
 }
 
 func (s *Service) LoadRoutes(ctx context.Context) error {
@@ -334,11 +372,24 @@ func (s *Service) validateRoute(route domain.Route) error {
 	return nil
 }
 
-func (s *Service) ListIntegrations(ctx context.Context, authorization string) ([]domain.ManagedIntegration, error) {
+func (s *Service) ListIntegrations(ctx context.Context, authorization string, source domain.Source) ([]domain.ManagedIntegration, error) {
 	if err := s.authorize(authorization); err != nil {
 		return nil, err
 	}
-	return s.store.ListIntegrations(ctx)
+	items, err := s.store.ListIntegrations(ctx)
+	if err != nil {
+		return items, normalizeDynamicConfigErr(err)
+	}
+	if source == "" {
+		return items, nil
+	}
+	filtered := make([]domain.ManagedIntegration, 0, len(items))
+	for _, item := range items {
+		if item.Source == source {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered, nil
 }
 
 func (s *Service) GetIntegration(ctx context.Context, authorization, integrationID string) (domain.ManagedIntegration, error) {
@@ -347,6 +398,9 @@ func (s *Service) GetIntegration(ctx context.Context, authorization, integration
 	}
 	item, err := s.store.GetIntegration(ctx, integrationID)
 	if err != nil {
+		if errors.Is(err, sqlite.ErrEncryptionUnavailable) {
+			return domain.ManagedIntegration{}, ErrDynamicConfigUnavailable
+		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return domain.ManagedIntegration{}, ErrIntegrationNotFound
 		}
@@ -366,10 +420,10 @@ func (s *Service) CreateIntegration(ctx context.Context, authorization string, i
 	integration.CreatedAt = now
 	integration.UpdatedAt = now
 	if err := s.store.CreateIntegration(ctx, integration); err != nil {
-		return domain.ManagedIntegration{}, err
+		return domain.ManagedIntegration{}, normalizeDynamicConfigErr(err)
 	}
 	if err := s.ReloadDynamicConfig(ctx); err != nil {
-		return domain.ManagedIntegration{}, err
+		return domain.ManagedIntegration{}, normalizeDynamicConfigErr(err)
 	}
 	return integration, nil
 }
@@ -380,6 +434,9 @@ func (s *Service) UpdateIntegration(ctx context.Context, authorization string, i
 	}
 	current, err := s.store.GetIntegration(ctx, integration.ID)
 	if err != nil {
+		if errors.Is(err, sqlite.ErrEncryptionUnavailable) {
+			return domain.ManagedIntegration{}, ErrDynamicConfigUnavailable
+		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return domain.ManagedIntegration{}, ErrIntegrationNotFound
 		}
@@ -397,10 +454,10 @@ func (s *Service) UpdateIntegration(ctx context.Context, authorization string, i
 		return domain.ManagedIntegration{}, err
 	}
 	if err := s.store.UpdateIntegration(ctx, integration); err != nil {
-		return domain.ManagedIntegration{}, err
+		return domain.ManagedIntegration{}, normalizeDynamicConfigErr(err)
 	}
 	if err := s.ReloadDynamicConfig(ctx); err != nil {
-		return domain.ManagedIntegration{}, err
+		return domain.ManagedIntegration{}, normalizeDynamicConfigErr(err)
 	}
 	return integration, nil
 }
@@ -410,22 +467,38 @@ func (s *Service) DeleteIntegration(ctx context.Context, authorization, integrat
 		return err
 	}
 	if _, err := s.store.GetIntegration(ctx, integrationID); err != nil {
+		if errors.Is(err, sqlite.ErrEncryptionUnavailable) {
+			return ErrDynamicConfigUnavailable
+		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrIntegrationNotFound
 		}
 		return err
 	}
 	if err := s.store.DeleteIntegration(ctx, integrationID); err != nil {
-		return err
+		return normalizeDynamicConfigErr(err)
 	}
-	return s.ReloadDynamicConfig(ctx)
+	return normalizeDynamicConfigErr(s.ReloadDynamicConfig(ctx))
 }
 
-func (s *Service) ListDestinations(ctx context.Context, authorization string) ([]domain.ManagedDestination, error) {
+func (s *Service) ListDestinations(ctx context.Context, authorization string, destinationType domain.DestinationType) ([]domain.ManagedDestination, error) {
 	if err := s.authorize(authorization); err != nil {
 		return nil, err
 	}
-	return s.store.ListDestinations(ctx)
+	items, err := s.store.ListDestinations(ctx)
+	if err != nil {
+		return items, normalizeDynamicConfigErr(err)
+	}
+	if destinationType == "" {
+		return items, nil
+	}
+	filtered := make([]domain.ManagedDestination, 0, len(items))
+	for _, item := range items {
+		if item.Type == destinationType {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered, nil
 }
 
 func (s *Service) GetDestination(ctx context.Context, authorization, destinationID string) (domain.ManagedDestination, error) {
@@ -434,6 +507,9 @@ func (s *Service) GetDestination(ctx context.Context, authorization, destination
 	}
 	item, err := s.store.GetDestination(ctx, destinationID)
 	if err != nil {
+		if errors.Is(err, sqlite.ErrEncryptionUnavailable) {
+			return domain.ManagedDestination{}, ErrDynamicConfigUnavailable
+		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return domain.ManagedDestination{}, ErrDestinationNotFound
 		}
@@ -453,10 +529,10 @@ func (s *Service) CreateDestination(ctx context.Context, authorization string, d
 	destination.CreatedAt = now
 	destination.UpdatedAt = now
 	if err := s.store.CreateDestination(ctx, destination); err != nil {
-		return domain.ManagedDestination{}, err
+		return domain.ManagedDestination{}, normalizeDynamicConfigErr(err)
 	}
 	if err := s.ReloadDynamicConfig(ctx); err != nil {
-		return domain.ManagedDestination{}, err
+		return domain.ManagedDestination{}, normalizeDynamicConfigErr(err)
 	}
 	return destination, nil
 }
@@ -467,6 +543,9 @@ func (s *Service) UpdateDestination(ctx context.Context, authorization string, d
 	}
 	current, err := s.store.GetDestination(ctx, destination.ID)
 	if err != nil {
+		if errors.Is(err, sqlite.ErrEncryptionUnavailable) {
+			return domain.ManagedDestination{}, ErrDynamicConfigUnavailable
+		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return domain.ManagedDestination{}, ErrDestinationNotFound
 		}
@@ -484,10 +563,10 @@ func (s *Service) UpdateDestination(ctx context.Context, authorization string, d
 		return domain.ManagedDestination{}, err
 	}
 	if err := s.store.UpdateDestination(ctx, destination); err != nil {
-		return domain.ManagedDestination{}, err
+		return domain.ManagedDestination{}, normalizeDynamicConfigErr(err)
 	}
 	if err := s.ReloadDynamicConfig(ctx); err != nil {
-		return domain.ManagedDestination{}, err
+		return domain.ManagedDestination{}, normalizeDynamicConfigErr(err)
 	}
 	return destination, nil
 }
@@ -497,12 +576,96 @@ func (s *Service) DeleteDestination(ctx context.Context, authorization, destinat
 		return err
 	}
 	if _, err := s.store.GetDestination(ctx, destinationID); err != nil {
+		if errors.Is(err, sqlite.ErrEncryptionUnavailable) {
+			return ErrDynamicConfigUnavailable
+		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrDestinationNotFound
 		}
 		return err
 	}
 	if err := s.store.DeleteDestination(ctx, destinationID); err != nil {
+		return normalizeDynamicConfigErr(err)
+	}
+	return normalizeDynamicConfigErr(s.ReloadDynamicConfig(ctx))
+}
+
+func (s *Service) ListRendererProfiles(ctx context.Context, authorization string) ([]domain.ManagedRendererProfile, error) {
+	if err := s.authorize(authorization); err != nil {
+		return nil, err
+	}
+	return s.store.ListRendererProfiles(ctx)
+}
+
+func (s *Service) GetRendererProfile(ctx context.Context, authorization, profileID string) (domain.ManagedRendererProfile, error) {
+	if err := s.authorize(authorization); err != nil {
+		return domain.ManagedRendererProfile{}, err
+	}
+	item, err := s.store.GetRendererProfile(ctx, profileID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return domain.ManagedRendererProfile{}, ErrRendererProfileNotFound
+		}
+		return domain.ManagedRendererProfile{}, err
+	}
+	return item, nil
+}
+
+func (s *Service) CreateRendererProfile(ctx context.Context, authorization string, profile domain.ManagedRendererProfile) (domain.ManagedRendererProfile, error) {
+	if err := s.authorize(authorization); err != nil {
+		return domain.ManagedRendererProfile{}, err
+	}
+	if err := s.validateRendererProfile(profile); err != nil {
+		return domain.ManagedRendererProfile{}, err
+	}
+	now := s.clock.Now().UTC()
+	profile.CreatedAt = now
+	profile.UpdatedAt = now
+	if err := s.store.CreateRendererProfile(ctx, profile); err != nil {
+		return domain.ManagedRendererProfile{}, err
+	}
+	if err := s.ReloadDynamicConfig(ctx); err != nil {
+		return domain.ManagedRendererProfile{}, err
+	}
+	return profile, nil
+}
+
+func (s *Service) UpdateRendererProfile(ctx context.Context, authorization string, profile domain.ManagedRendererProfile) (domain.ManagedRendererProfile, error) {
+	if err := s.authorize(authorization); err != nil {
+		return domain.ManagedRendererProfile{}, err
+	}
+	current, err := s.store.GetRendererProfile(ctx, profile.ID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return domain.ManagedRendererProfile{}, ErrRendererProfileNotFound
+		}
+		return domain.ManagedRendererProfile{}, err
+	}
+	profile.CreatedAt = current.CreatedAt
+	profile.UpdatedAt = s.clock.Now().UTC()
+	if err := s.validateRendererProfile(profile); err != nil {
+		return domain.ManagedRendererProfile{}, err
+	}
+	if err := s.store.UpdateRendererProfile(ctx, profile); err != nil {
+		return domain.ManagedRendererProfile{}, err
+	}
+	if err := s.ReloadDynamicConfig(ctx); err != nil {
+		return domain.ManagedRendererProfile{}, err
+	}
+	return profile, nil
+}
+
+func (s *Service) DeleteRendererProfile(ctx context.Context, authorization, profileID string) error {
+	if err := s.authorize(authorization); err != nil {
+		return err
+	}
+	if _, err := s.store.GetRendererProfile(ctx, profileID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrRendererProfileNotFound
+		}
+		return err
+	}
+	if err := s.store.DeleteRendererProfile(ctx, profileID); err != nil {
 		return err
 	}
 	return s.ReloadDynamicConfig(ctx)
@@ -559,11 +722,29 @@ func (s *Service) validateDestination(destination domain.ManagedDestination) err
 		return fmt.Errorf("destination type %q is not supported in this slice", destination.Type)
 	}
 	if destination.Profile != "" {
-		if _, ok := s.cfg.RendererProfiles[destination.Profile]; !ok {
+		if s.profiles == nil {
+			return errors.New("renderer profile registry is not configured")
+		}
+		if _, ok := s.profiles.Get(destination.Profile); !ok {
 			return fmt.Errorf("destination references undefined renderer profile %q", destination.Profile)
 		}
 	}
 	return nil
+}
+
+func (s *Service) validateRendererProfile(profile domain.ManagedRendererProfile) error {
+	if strings.TrimSpace(profile.ID) == "" {
+		return errors.New("renderer profile id is required")
+	}
+	if len(profile.Profile) == 0 {
+		return errors.New("renderer profile must contain at least one source")
+	}
+	cfg := config.Config{
+		RendererProfiles: map[string]config.ProfileConfig{
+			profile.ID: runtimeconfig.MapRendererProfiles([]domain.ManagedRendererProfile{profile})[profile.ID],
+		},
+	}
+	return cfg.ValidateRendererProfiles()
 }
 
 func normalizeSources(values []domain.Source) []domain.Source {

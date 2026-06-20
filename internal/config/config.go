@@ -92,10 +92,12 @@ type LoggingConfig struct {
 }
 
 type DatabaseConfig struct {
-	Path               string        `mapstructure:"path"`
-	BusyTimeout        time.Duration `mapstructure:"busy_timeout"`
-	MaxOpenConnections int           `mapstructure:"max_open_connections"`
-	RetainRawPayloads  bool          `mapstructure:"retain_raw_payloads"`
+	Path                  string        `mapstructure:"path"`
+	EncryptionKeyEnv      string        `mapstructure:"encryption_key_env"`
+	BusyTimeout           time.Duration `mapstructure:"busy_timeout"`
+	MaxOpenConnections    int           `mapstructure:"max_open_connections"`
+	RetainRawPayloads     bool          `mapstructure:"retain_raw_payloads"`
+	ResolvedEncryptionKey string        `mapstructure:"-"`
 }
 
 type WorkersConfig struct {
@@ -194,6 +196,12 @@ func (c *Config) resolveSecrets() error {
 	}
 	c.API.ResolvedAdminToken = adminToken
 
+	encryptionKey, key, err := resolveSecretValue(c.Database.EncryptionKeyEnv)
+	if err != nil {
+		return fmt.Errorf("database encryption key %q: %w", key, err)
+	}
+	c.Database.ResolvedEncryptionKey = encryptionKey
+
 	for id, integration := range c.Integrations {
 		value, key, err := resolveSecretValue(integration.SecretEnv)
 		if integration.Source == domain.SourceSentry && integration.ClientSecretEnv != "" {
@@ -251,6 +259,9 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.Database.Path) == "" {
 		errs = append(errs, errors.New("database.path is required"))
 	}
+	if strings.TrimSpace(c.Database.EncryptionKeyEnv) == "" {
+		errs = append(errs, errors.New("database.encryption_key_env is required"))
+	}
 	if c.Workers.BatchSize <= 0 {
 		errs = append(errs, errors.New("workers.batch_size must be > 0"))
 	}
@@ -289,11 +300,6 @@ func (c Config) Validate() error {
 			errs = append(errs, fmt.Errorf("destination %q type %q is not yet supported in this slice", id, destination.Type))
 		}
 
-		if destination.Profile != "" {
-			if _, ok := c.RendererProfiles[destination.Profile]; !ok {
-				errs = append(errs, fmt.Errorf("destination %q references undefined renderer profile %q", id, destination.Profile))
-			}
-		}
 	}
 
 	if err := c.ValidateRendererProfiles(); err != nil {

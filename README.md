@@ -55,7 +55,6 @@ Explicitly out of scope:
 
 - Multi-node active/active deployment.
 - Public multi-tenant SaaS behavior.
-- Runtime editing of integrations, destination credentials, or transport settings.
 - Arbitrary user-authored transformation scripts.
 - Exactly-once external delivery semantics.
 - On-call schedules, acknowledgements, or bidirectional chat interactions.
@@ -109,7 +108,7 @@ Docs and health:
 - SQLite is the durable inbox/outbox for version 1, which means one active application instance owns the database.
 - Huma webhook operations are retained because raw-body verification and OpenAPI generation can coexist.
 - Routing is additive; duplicate destination matches collapse into a single delivery row per event and destination.
-- Renderers are code-defined in version 1 to keep escaping, validation, and testing deterministic.
+- Built-in renderers remain the fallback baseline, with optional profile-driven templates layered on top and managed live through the admin API.
 
 ## Repository Direction
 
@@ -126,8 +125,15 @@ The detailed design, ADRs, API behavior, persistence model, and package directio
 
 - Configuration references secret environment variables; it does not embed secret values.
 - Startup fails if required secrets, destinations, or integrations are invalid.
+- `database.encryption_key_env` points at the master encryption key env var used to protect dynamic integrations/destinations secrets in SQLite.
 - SQLite runs with WAL, foreign keys enabled, a busy timeout, and short write transactions.
 - A versioned migration system is required; `AutoMigrate` is not the production schema strategy.
+
+## Environment Variables
+
+- `GATEWAY_ENCRYPTION_KEY`: the default env var referenced by `database.encryption_key_env`. It must decode to 32 bytes as hex or base64. Generate one with `make gen-encryption-key`.
+- `GATEWAY_ADMIN_TOKEN`: referenced by `api.admin_token_env` in config and used for operational API auth.
+- Provider secret env vars are referenced from config, for example `WATCHER_WEBHOOK_SECRET`, `GITHUB_WEBHOOK_SECRET`, `SLACK_DEPLOYMENTS_WEBHOOK_URL`, and `TELEGRAM_ONCALL_BOT_TOKEN`.
 
 ## Operational Constraints
 

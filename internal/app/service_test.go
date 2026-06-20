@@ -89,6 +89,7 @@ func TestBootstrapDynamicConfigSeedsAndReloadsRegistries(t *testing.T) {
 	store := &seedStoreStub{}
 	integrations := runtimeconfig.NewIntegrationRegistry(nil)
 	destinations := runtimeconfig.NewDestinationRegistry(nil)
+	profiles := runtimeconfig.NewRendererProfileRegistry(nil)
 	svc := NewService(config.Config{
 		Integrations: map[string]config.IntegrationConfig{
 			"github-main": {
@@ -102,7 +103,19 @@ func TestBootstrapDynamicConfigSeedsAndReloadsRegistries(t *testing.T) {
 				ResolvedURL: "https://example.invalid",
 			},
 		},
-	}, clock.Real{}, store, nil, routing.New(nil), integrations, destinations)
+		RendererProfiles: map[string]config.ProfileConfig{
+			"detailed": {
+				"watcher": {
+					Default: config.DestinationTemplates{
+						Slack: &config.SlackTemplateConfig{
+							Title: "{{.Title}}",
+							Body:  "{{.Summary}}",
+						},
+					},
+				},
+			},
+		},
+	}, clock.Real{}, store, nil, routing.New(nil), integrations, destinations, profiles)
 
 	if err := svc.BootstrapDynamicConfig(context.Background()); err != nil {
 		t.Fatalf("bootstrap failed: %v", err)
@@ -113,6 +126,9 @@ func TestBootstrapDynamicConfigSeedsAndReloadsRegistries(t *testing.T) {
 	}
 	if _, ok := destinations.Get("slack-deployments"); !ok {
 		t.Fatal("expected destination registry to be seeded")
+	}
+	if _, ok := profiles.Get("detailed"); !ok {
+		t.Fatal("expected renderer profile registry to be seeded")
 	}
 }
 
@@ -130,7 +146,7 @@ func newTestService() *Service {
 		"slack-deployments": {
 			Type: domain.DestinationSlack,
 		},
-	}))
+	}), runtimeconfig.NewRendererProfileRegistry(nil))
 }
 
 type routeStoreStub struct{}
@@ -153,7 +169,20 @@ func (routeStoreStub) GetDestination(context.Context, string) (domain.ManagedDes
 func (routeStoreStub) CreateDestination(context.Context, domain.ManagedDestination) error { return nil }
 func (routeStoreStub) UpdateDestination(context.Context, domain.ManagedDestination) error { return nil }
 func (routeStoreStub) DeleteDestination(context.Context, string) error                    { return nil }
-func (routeStoreStub) ListRoutes(context.Context) ([]domain.Route, error)                 { return nil, nil }
+func (routeStoreStub) ListRendererProfiles(context.Context) ([]domain.ManagedRendererProfile, error) {
+	return nil, nil
+}
+func (routeStoreStub) GetRendererProfile(context.Context, string) (domain.ManagedRendererProfile, error) {
+	return domain.ManagedRendererProfile{}, context.Canceled
+}
+func (routeStoreStub) CreateRendererProfile(context.Context, domain.ManagedRendererProfile) error {
+	return nil
+}
+func (routeStoreStub) UpdateRendererProfile(context.Context, domain.ManagedRendererProfile) error {
+	return nil
+}
+func (routeStoreStub) DeleteRendererProfile(context.Context, string) error { return nil }
+func (routeStoreStub) ListRoutes(context.Context) ([]domain.Route, error)  { return nil, nil }
 func (routeStoreStub) GetRoute(context.Context, string) (domain.Route, error) {
 	return domain.Route{}, context.Canceled
 }
@@ -182,6 +211,7 @@ type seedStoreStub struct {
 	routeStoreStub
 	integrations []domain.ManagedIntegration
 	destinations []domain.ManagedDestination
+	profiles     []domain.ManagedRendererProfile
 }
 
 func (s *seedStoreStub) ListIntegrations(context.Context) ([]domain.ManagedIntegration, error) {
@@ -245,6 +275,40 @@ func (s *seedStoreStub) DeleteDestination(_ context.Context, id string) error {
 	for i, item := range s.destinations {
 		if item.ID == id {
 			s.destinations = append(s.destinations[:i], s.destinations[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
+
+func (s *seedStoreStub) ListRendererProfiles(context.Context) ([]domain.ManagedRendererProfile, error) {
+	return append([]domain.ManagedRendererProfile(nil), s.profiles...), nil
+}
+func (s *seedStoreStub) CreateRendererProfile(_ context.Context, profile domain.ManagedRendererProfile) error {
+	s.profiles = append(s.profiles, profile)
+	return nil
+}
+func (s *seedStoreStub) GetRendererProfile(_ context.Context, id string) (domain.ManagedRendererProfile, error) {
+	for _, item := range s.profiles {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return domain.ManagedRendererProfile{}, errors.New("not found")
+}
+func (s *seedStoreStub) UpdateRendererProfile(_ context.Context, profile domain.ManagedRendererProfile) error {
+	for i, item := range s.profiles {
+		if item.ID == profile.ID {
+			s.profiles[i] = profile
+			return nil
+		}
+	}
+	return errors.New("not found")
+}
+func (s *seedStoreStub) DeleteRendererProfile(_ context.Context, id string) error {
+	for i, item := range s.profiles {
+		if item.ID == id {
+			s.profiles = append(s.profiles[:i], s.profiles[i+1:]...)
 			return nil
 		}
 	}

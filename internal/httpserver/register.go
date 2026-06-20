@@ -14,7 +14,7 @@ func registerRoutes(api huma.API, cfg config.Config, handler *Handler) {
 		Path:          "/webhooks/v1/watcher/{integration_id}",
 		Summary:       "Receive Watcher webhook events",
 		Description:   "Accepts a signed Watcher webhook, verifies the HMAC signature against the raw request body, normalizes the provider payload into one or more internal events, persists the receipt and delivery jobs, and returns `202 Accepted` only after the work is durable.",
-		Tags:          []string{"Watcher"},
+		Tags:          []string{"Sources"},
 		DefaultStatus: http.StatusAccepted,
 		MaxBodyBytes:  cfg.Server.MaxWebhookBodyBytes,
 	}, handler.handleWatcherWebhook)
@@ -25,7 +25,7 @@ func registerRoutes(api huma.API, cfg config.Config, handler *Handler) {
 		Path:          "/webhooks/v1/github/{integration_id}",
 		Summary:       "Receive GitHub webhook events",
 		Description:   "Accepts a signed GitHub webhook, verifies `X-Hub-Signature-256` using the raw request body, normalizes supported event families such as pull requests, workflow runs, and releases, persists the receipt and delivery jobs, and returns `202 Accepted` only after the write commits.",
-		Tags:          []string{"GitHub"},
+		Tags:          []string{"Sources"},
 		DefaultStatus: http.StatusAccepted,
 		MaxBodyBytes:  cfg.Server.MaxWebhookBodyBytes,
 	}, handler.handleGitHubWebhook)
@@ -198,6 +198,56 @@ func registerRoutes(api huma.API, cfg config.Config, handler *Handler) {
 		Tags:        []string{"Destinations"},
 		Security:    []map[string][]string{{"bearerAuth": {}}},
 	}, handler.deleteDestination)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "renderer-profiles-list",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/renderer-profiles",
+		Summary:     "List renderer profiles",
+		Description: "Returns the dynamically managed renderer profiles that destinations can reference to customize source-specific and event-specific message output.",
+		Tags:        []string{"Renderer Profiles"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+	}, handler.listRendererProfiles)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "renderer-profile-detail",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/renderer-profiles/{profile_id}",
+		Summary:     "Get renderer profile detail",
+		Description: "Returns one dynamically managed renderer profile, including its per-source defaults and event-specific overrides.",
+		Tags:        []string{"Renderer Profiles"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+	}, handler.getRendererProfile)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "renderer-profile-create",
+		Method:      http.MethodPost,
+		Path:        "/api/v1/renderer-profiles",
+		Summary:     "Create renderer profile",
+		Description: "Creates a dynamically managed renderer profile and reloads the live renderer registry used by delivery workers.",
+		Tags:        []string{"Renderer Profiles"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+	}, handler.createRendererProfile)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "renderer-profile-update",
+		Method:      http.MethodPut,
+		Path:        "/api/v1/renderer-profiles/{profile_id}",
+		Summary:     "Update renderer profile",
+		Description: "Updates one dynamically managed renderer profile and reloads the live renderer registry used by delivery workers.",
+		Tags:        []string{"Renderer Profiles"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+	}, handler.updateRendererProfile)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "renderer-profile-delete",
+		Method:      http.MethodDelete,
+		Path:        "/api/v1/renderer-profiles/{profile_id}",
+		Summary:     "Delete renderer profile",
+		Description: "Deletes one dynamically managed renderer profile and reloads the live renderer registry. Destinations that still reference the deleted profile fall back to built-in rendering.",
+		Tags:        []string{"Renderer Profiles"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+	}, handler.deleteRendererProfile)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "routes-list",

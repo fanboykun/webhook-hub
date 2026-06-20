@@ -11,6 +11,7 @@ import (
 
 	"github.com/fanboykun/webhook-hub/internal/config"
 	"github.com/fanboykun/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
 )
 
 var update = flag.Bool("update", false, "update golden files")
@@ -74,7 +75,7 @@ func TestConfigurableRenderer_Resolution(t *testing.T) {
 		},
 	}
 
-	r := NewConfigurableRenderer(profiles, nil, nil)
+	r := NewConfigurableRenderer(runtimeconfig.NewRendererProfileRegistry(profiles), nil, nil)
 	ctx := context.Background()
 
 	// 1. Destination with no profile -> fall back
@@ -158,7 +159,7 @@ func TestGoldenIntegration(t *testing.T) {
 		},
 	}
 
-	r := NewConfigurableRenderer(profiles, nil, nil)
+	r := NewConfigurableRenderer(runtimeconfig.NewRendererProfileRegistry(profiles), nil, nil)
 	ctx := context.Background()
 
 	evt := domain.Event{

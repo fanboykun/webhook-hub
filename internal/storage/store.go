@@ -19,6 +19,11 @@ type Store interface {
 	CreateDestination(ctx context.Context, destination domain.ManagedDestination) error
 	UpdateDestination(ctx context.Context, destination domain.ManagedDestination) error
 	DeleteDestination(ctx context.Context, id string) error
+	ListRendererProfiles(ctx context.Context) ([]domain.ManagedRendererProfile, error)
+	GetRendererProfile(ctx context.Context, id string) (domain.ManagedRendererProfile, error)
+	CreateRendererProfile(ctx context.Context, profile domain.ManagedRendererProfile) error
+	UpdateRendererProfile(ctx context.Context, profile domain.ManagedRendererProfile) error
+	DeleteRendererProfile(ctx context.Context, id string) error
 	ListRoutes(ctx context.Context) ([]domain.Route, error)
 	GetRoute(ctx context.Context, id string) (domain.Route, error)
 	CreateRoute(ctx context.Context, route domain.Route) error

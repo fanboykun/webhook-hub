@@ -17,7 +17,7 @@ type Store struct {
 	cipher *configcrypto.Cipher
 }
 
-var errEncryptionUnavailable = errors.New("dynamic config encryption is not configured")
+var ErrEncryptionUnavailable = errors.New("dynamic config encryption is not configured")
 
 func (s *Store) Ingest(ctx context.Context, batch domain.IngestBatch) (domain.IngestResult, error) {
 	if err := validateIngestBatch(batch); err != nil {
@@ -72,7 +72,7 @@ func (s *Store) Ingest(ctx context.Context, batch domain.IngestBatch) (domain.In
 
 func (s *Store) ListIntegrations(ctx context.Context) ([]domain.ManagedIntegration, error) {
 	if s.cipher == nil {
-		return nil, errEncryptionUnavailable
+		return nil, ErrEncryptionUnavailable
 	}
 	var models []integrationModel
 	if err := s.db.WithContext(ctx).Order("id ASC").Find(&models).Error; err != nil {
@@ -92,7 +92,7 @@ func (s *Store) ListIntegrations(ctx context.Context) ([]domain.ManagedIntegrati
 
 func (s *Store) GetIntegration(ctx context.Context, id string) (domain.ManagedIntegration, error) {
 	if s.cipher == nil {
-		return domain.ManagedIntegration{}, errEncryptionUnavailable
+		return domain.ManagedIntegration{}, ErrEncryptionUnavailable
 	}
 	var model integrationModel
 	if err := s.db.WithContext(ctx).First(&model, "id = ?", id).Error; err != nil {
@@ -125,14 +125,14 @@ func (s *Store) UpdateIntegration(ctx context.Context, integration domain.Manage
 
 func (s *Store) DeleteIntegration(ctx context.Context, id string) error {
 	if s.cipher == nil {
-		return errEncryptionUnavailable
+		return ErrEncryptionUnavailable
 	}
 	return s.db.WithContext(ctx).Delete(&integrationModel{}, "id = ?", id).Error
 }
 
 func (s *Store) ListDestinations(ctx context.Context) ([]domain.ManagedDestination, error) {
 	if s.cipher == nil {
-		return nil, errEncryptionUnavailable
+		return nil, ErrEncryptionUnavailable
 	}
 	var models []destinationModel
 	if err := s.db.WithContext(ctx).Order("id ASC").Find(&models).Error; err != nil {
@@ -152,7 +152,7 @@ func (s *Store) ListDestinations(ctx context.Context) ([]domain.ManagedDestinati
 
 func (s *Store) GetDestination(ctx context.Context, id string) (domain.ManagedDestination, error) {
 	if s.cipher == nil {
-		return domain.ManagedDestination{}, errEncryptionUnavailable
+		return domain.ManagedDestination{}, ErrEncryptionUnavailable
 	}
 	var model destinationModel
 	if err := s.db.WithContext(ctx).First(&model, "id = ?", id).Error; err != nil {
@@ -185,9 +185,59 @@ func (s *Store) UpdateDestination(ctx context.Context, destination domain.Manage
 
 func (s *Store) DeleteDestination(ctx context.Context, id string) error {
 	if s.cipher == nil {
-		return errEncryptionUnavailable
+		return ErrEncryptionUnavailable
 	}
 	return s.db.WithContext(ctx).Delete(&destinationModel{}, "id = ?", id).Error
+}
+
+func (s *Store) ListRendererProfiles(ctx context.Context) ([]domain.ManagedRendererProfile, error) {
+	var models []rendererProfileModel
+	if err := s.db.WithContext(ctx).Order("id ASC").Find(&models).Error; err != nil {
+		return nil, err
+	}
+
+	out := make([]domain.ManagedRendererProfile, 0, len(models))
+	for _, model := range models {
+		item, err := s.toDomainRendererProfile(model)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+func (s *Store) GetRendererProfile(ctx context.Context, id string) (domain.ManagedRendererProfile, error) {
+	var model rendererProfileModel
+	if err := s.db.WithContext(ctx).First(&model, "id = ?", id).Error; err != nil {
+		return domain.ManagedRendererProfile{}, err
+	}
+	return s.toDomainRendererProfile(model)
+}
+
+func (s *Store) CreateRendererProfile(ctx context.Context, profile domain.ManagedRendererProfile) error {
+	model, err := s.toRendererProfileModel(profile)
+	if err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Create(&model).Error
+}
+
+func (s *Store) UpdateRendererProfile(ctx context.Context, profile domain.ManagedRendererProfile) error {
+	model, err := s.toRendererProfileModel(profile)
+	if err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Model(&rendererProfileModel{}).
+		Where("id = ?", profile.ID).
+		Updates(map[string]any{
+			"profile_json": model.ProfileJSON,
+			"updated_at":   profile.UpdatedAt,
+		}).Error
+}
+
+func (s *Store) DeleteRendererProfile(ctx context.Context, id string) error {
+	return s.db.WithContext(ctx).Delete(&rendererProfileModel{}, "id = ?", id).Error
 }
 
 func (s *Store) ListRoutes(ctx context.Context) ([]domain.Route, error) {
@@ -380,7 +430,7 @@ type integrationPayload struct {
 
 func (s *Store) toIntegrationModel(in domain.ManagedIntegration) (integrationModel, error) {
 	if s.cipher == nil {
-		return integrationModel{}, errEncryptionUnavailable
+		return integrationModel{}, ErrEncryptionUnavailable
 	}
 	payload, err := json.Marshal(integrationPayload{
 		Secret:       in.Secret,
@@ -433,7 +483,7 @@ type destinationPayload struct {
 
 func (s *Store) toDestinationModel(in domain.ManagedDestination) (destinationModel, error) {
 	if s.cipher == nil {
-		return destinationModel{}, errEncryptionUnavailable
+		return destinationModel{}, ErrEncryptionUnavailable
 	}
 	payload, err := json.Marshal(destinationPayload{
 		WebhookURL: in.WebhookURL,
@@ -477,6 +527,32 @@ func (s *Store) toDomainDestination(in destinationModel) (domain.ManagedDestinat
 		Profile:    payload.Profile,
 		CreatedAt:  in.CreatedAt,
 		UpdatedAt:  in.UpdatedAt,
+	}, nil
+}
+
+func (s *Store) toRendererProfileModel(in domain.ManagedRendererProfile) (rendererProfileModel, error) {
+	profileJSON, err := json.Marshal(in.Profile)
+	if err != nil {
+		return rendererProfileModel{}, err
+	}
+	return rendererProfileModel{
+		ID:          in.ID,
+		ProfileJSON: profileJSON,
+		CreatedAt:   in.CreatedAt,
+		UpdatedAt:   in.UpdatedAt,
+	}, nil
+}
+
+func (s *Store) toDomainRendererProfile(in rendererProfileModel) (domain.ManagedRendererProfile, error) {
+	var profile domain.RendererProfile
+	if err := json.Unmarshal(in.ProfileJSON, &profile); err != nil {
+		return domain.ManagedRendererProfile{}, err
+	}
+	return domain.ManagedRendererProfile{
+		ID:        in.ID,
+		Profile:   profile,
+		CreatedAt: in.CreatedAt,
+		UpdatedAt: in.UpdatedAt,
 	}, nil
 }
 

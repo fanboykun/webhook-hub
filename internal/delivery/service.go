@@ -27,11 +27,11 @@ type Service struct {
 	destinations   *runtimeconfig.DestinationRegistry
 }
 
-func NewService(store storage.Store, cfg config.Config, destinations *runtimeconfig.DestinationRegistry, clk clock.Clock, logger *slog.Logger) *Service {
-	return NewServiceWithRenderer(store, cfg, destinations, clk, logger, message.NewConfigurableRenderer(cfg.RendererProfiles, nil, nil))
+func NewService(store storage.Store, cfg config.Config, destinations *runtimeconfig.DestinationRegistry, profiles *runtimeconfig.RendererProfileRegistry, clk clock.Clock, logger *slog.Logger) *Service {
+	return NewServiceWithRenderer(store, cfg, destinations, profiles, clk, logger, message.NewConfigurableRenderer(profiles, nil, nil))
 }
 
-func NewServiceWithRenderer(store storage.Store, cfg config.Config, destinations *runtimeconfig.DestinationRegistry, clk clock.Clock, logger *slog.Logger, renderer message.Renderer) *Service {
+func NewServiceWithRenderer(store storage.Store, cfg config.Config, destinations *runtimeconfig.DestinationRegistry, profiles *runtimeconfig.RendererProfileRegistry, clk clock.Clock, logger *slog.Logger, renderer message.Renderer) *Service {
 	return &Service{
 		store:          store,
 		cfg:            cfg,
