@@ -1,0 +1,1 @@
+{"blocks":[{"text":{"text":"*Deployment failed*\nDeployment of api-prod to v1.4.3 failed during health_check: health check returned 503 \u003cerror\u003e","type":"mrkdwn"},"type":"section"},{"elements":[{"text":"service=api-prod env=production release=v1.4.3 profile=","type":"mrkdwn"}],"type":"context"}],"text":"[ERROR] Deployment failed"}
