@@ -96,10 +96,13 @@ func (s *Service) Handle(ctx context.Context, source domain.Source, req InboundR
 	}
 
 	totalMatches := 0
-	for _, event := range normalized.Events {
-		event.ID = id.New(now)
-		event.ReceiptID = receiptID
-		event.CreatedAt = now
+	for _, candidate := range normalized.Events {
+		event := domain.Event{
+			ID:            id.New(now),
+			ReceiptID:     receiptID,
+			EventEnvelope: candidate.EventEnvelope,
+			CreatedAt:     now,
+		}
 
 		matches := s.router.Destinations(event)
 		matchedRouteIDs := make([]string, 0, len(matches))
@@ -137,7 +140,7 @@ func (s *Service) Handle(ctx context.Context, source domain.Source, req InboundR
 		eventFields := []any{
 			"source", event.Source,
 			"event_id", event.ID,
-			"event_type", event.Type,
+			"event_key", event.Key,
 			"severity", event.Severity,
 			"route_match_count", len(matches),
 			"route_ids", matchedRouteIDs,

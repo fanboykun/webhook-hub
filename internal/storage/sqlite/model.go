@@ -18,32 +18,32 @@ type receiptModel struct {
 }
 
 type eventModel struct {
-	ID             string `gorm:"primaryKey"`
-	ReceiptID      string `gorm:"index"`
-	Source         string `gorm:"index"`
-	IntegrationID  string
-	SourceEventID  string
-	Type           string `gorm:"index"`
-	Action         string
-	Lifecycle      string
-	Severity       string
-	Title          string
-	Summary        string
-	Service        string `gorm:"index:idx_events_service_env_occurred"`
-	Environment    string `gorm:"index:idx_events_service_env_occurred"`
-	Release        string
-	CommitSHA      string
-	Actor          string
-	Fingerprint    string `gorm:"index"`
-	GroupKey       string
-	URL            string
-	OccurredAt     time.Time `gorm:"index:idx_events_service_env_occurred"`
-	LabelsJSON     []byte
-	MetadataJSON   []byte `gorm:"column:fields_json"`
-	RouteTraceJSON []byte
-	PayloadVersion int
-	PayloadJSON    []byte
-	CreatedAt      time.Time
+	ID               string `gorm:"primaryKey"`
+	ReceiptID        string `gorm:"index"`
+	Source           string `gorm:"index"`
+	IntegrationID    string
+	SourceEventID    string
+	Key              string `gorm:"column:type;index"`
+	Action           string
+	Lifecycle        string
+	Severity         string
+	Title            string
+	Summary          string
+	ScopeService     string `gorm:"column:service;index:idx_events_service_env_occurred"`
+	ScopeEnvironment string `gorm:"column:environment;index:idx_events_service_env_occurred"`
+	LegacyRelease    string `gorm:"column:release"`
+	LegacyCommitSHA  string `gorm:"column:commit_sha"`
+	LegacyActor      string `gorm:"column:actor"`
+	Fingerprint      string `gorm:"index"`
+	GroupKey         string
+	SourceURL        string    `gorm:"column:url"`
+	OccurredAt       time.Time `gorm:"index:idx_events_service_env_occurred"`
+	LabelsJSON       []byte
+	MetadataJSON     []byte `gorm:"column:fields_json"`
+	RouteTraceJSON   []byte
+	PayloadVersion   int
+	PayloadJSON      []byte
+	CreatedAt        time.Time
 }
 
 type deliveryModel struct {

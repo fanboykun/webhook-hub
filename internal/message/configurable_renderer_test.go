@@ -75,7 +75,7 @@ func TestConfigurableRenderer_Resolution(t *testing.T) {
 
 	// 1. Destination with no profile -> fall back
 	destNoProfile := domain.Destination{ID: "d1", Type: domain.DestinationSlack, Profile: ""}
-	evt := domain.Event{Source: domain.SourceWatcher, Type: "watcher.deployment.failed"}
+	evt := domain.Event{EventEnvelope: domain.EventEnvelope{Source: domain.SourceWatcher, Key: "watcher.deployment.failed"}}
 	msg, err := r.Render(ctx, evt, destNoProfile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -96,7 +96,7 @@ func TestConfigurableRenderer_Resolution(t *testing.T) {
 
 	// 3. Event doesn't exist in profile -> fall back
 	destGoodProfile := domain.Destination{ID: "d3", Type: domain.DestinationSlack, Profile: "my-profile"}
-	evtNoBinding := domain.Event{Source: domain.SourceGitHub, Type: "github.pull_request.opened"}
+	evtNoBinding := domain.Event{EventEnvelope: domain.EventEnvelope{Source: domain.SourceGitHub, Key: "github.pull_request.opened"}}
 	msg, err = r.Render(ctx, evtNoBinding, destGoodProfile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -106,7 +106,7 @@ func TestConfigurableRenderer_Resolution(t *testing.T) {
 	}
 
 	// 4. Matches default template (e.g. event type has no override)
-	evtDefault := domain.Event{Source: domain.SourceWatcher, Type: "watcher.deployment.started"}
+	evtDefault := domain.Event{EventEnvelope: domain.EventEnvelope{Source: domain.SourceWatcher, Key: "watcher.deployment.started"}}
 	msg, err = r.Render(ctx, evtDefault, destGoodProfile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -116,7 +116,7 @@ func TestConfigurableRenderer_Resolution(t *testing.T) {
 	}
 
 	// 5. Matches override template
-	evtOverride := domain.Event{Source: domain.SourceWatcher, Type: "watcher.deployment.failed"}
+	evtOverride := domain.Event{EventEnvelope: domain.EventEnvelope{Source: domain.SourceWatcher, Key: "watcher.deployment.failed"}}
 	msg, err = r.Render(ctx, evtOverride, destGoodProfile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -141,10 +141,10 @@ func TestGoldenIntegration(t *testing.T) {
 			"watcher.deployment.failed": {
 				Slack: &domain.SlackTemplate{
 					Title: "CRITICAL ALERT: {{.Title}} failed in {{.Environment}}",
-					Body:  "*Service:* {{.Service}}\n*Release:* {{.Release}}\n*Error/Summary:* {{.Summary}}",
+					Body:  "*Service:* {{.Service}}\n*Release:* {{ index .Metadata \"release\" }}\n*Error/Summary:* {{.Summary}}",
 				},
 				Telegram: &domain.TelegramTemplate{
-					Text: "🚨 <b>{{.Title}} ({{.Lifecycle}})</b> 🚨\nEnvironment: <b>{{.Environment}}</b>\nService: <code>{{.Service}}</code>\nRelease: <code>{{.Release}}</code>\nSummary: <i>{{.Summary}}</i>\n<a href=\"{{.URL}}\">View Details</a>",
+					Text: "🚨 <b>{{.Title}} ({{.Lifecycle}})</b> 🚨\nEnvironment: <b>{{.Environment}}</b>\nService: <code>{{.Service}}</code>\nRelease: <code>{{ index .Metadata \"release\" }}</code>\nSummary: <i>{{.Summary}}</i>\n<a href=\"{{.SourceURL}}\">View Details</a>",
 				},
 			},
 		},
@@ -154,20 +154,19 @@ func TestGoldenIntegration(t *testing.T) {
 	ctx := context.Background()
 
 	evt := domain.Event{
-		ID:          "evt_1",
-		Source:      domain.SourceWatcher,
-		Type:        "watcher.deployment.failed",
-		Severity:    domain.SeverityError,
-		Lifecycle:   domain.LifecycleFailed,
-		Title:       "Deployment failed",
-		Summary:     "Deployment of api-prod to v1.4.3 failed during health_check: health check returned 503 <error>",
-		Service:     "api-prod",
-		Environment: "production",
-		Release:     "v1.4.3",
-		CommitSHA:   "abc12345",
-		Actor:       "agent",
-		URL:         "https://watcher.example.com/attempts/302",
-		OccurredAt:  time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC),
+		ID: "evt_1",
+		EventEnvelope: domain.EventEnvelope{
+			Source:       domain.SourceWatcher,
+			Key:          "watcher.deployment.failed",
+			Severity:     domain.SeverityError,
+			Lifecycle:    domain.LifecycleFailed,
+			Title:        "Deployment failed",
+			Summary:      "Deployment of api-prod to v1.4.3 failed during health_check: health check returned 503 <error>",
+			Scope:        domain.EventScope{Service: "api-prod", Environment: "production"},
+			SourceURL:    "https://watcher.example.com/attempts/302",
+			OccurredAt:   time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC),
+			MetadataJSON: []byte(`{"release":"v1.4.3","commit_sha":"abc12345","actor":"agent"}`),
+		},
 	}
 
 	tests := []struct {

@@ -52,6 +52,7 @@ type EmailTemplateConfig struct {
 
 type TemplateContext struct {
 	Source      string
+	EventKey    string
 	EventType   string
 	Title       string
 	Summary     string
@@ -59,12 +60,10 @@ type TemplateContext struct {
 	Lifecycle   string
 	Service     string
 	Environment string
-	Release     string
-	CommitSHA   string
-	Actor       string
-	URL         string
+	SourceURL   string
 	OccurredAt  time.Time
 	Payload     map[string]any
+	Metadata    map[string]any
 }
 
 type ServerConfig struct {
@@ -404,8 +403,8 @@ func IsTelegramChatID(value string) bool {
 		}
 		return true
 	}
-	if strings.HasPrefix(value, "-") {
-		value = strings.TrimPrefix(value, "-")
+	if after, ok := strings.CutPrefix(value, "-"); ok {
+		value = after
 	}
 	if value == "" {
 		return false

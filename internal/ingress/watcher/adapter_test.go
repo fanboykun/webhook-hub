@@ -52,8 +52,8 @@ func TestVerifyAndNormalizeStandardWebhookContract(t *testing.T) {
 	if result.SourceDeliveryID != webhookID || len(result.Events) != 1 {
 		t.Fatalf("unexpected normalize result: %+v", result)
 	}
-	if result.Events[0].Type != "watcher.deployment.failed" {
-		t.Fatalf("unexpected event type: %s", result.Events[0].Type)
+	if result.Events[0].Key != "watcher.deployment.failed" {
+		t.Fatalf("unexpected event key: %s", result.Events[0].Key)
 	}
 	if result.Events[0].Severity != domain.SeverityError {
 		t.Fatalf("unexpected severity: %s", result.Events[0].Severity)
@@ -96,8 +96,8 @@ func TestNormalizeHealthChangedEvent(t *testing.T) {
 	if len(result.Events) != 1 {
 		t.Fatalf("unexpected normalize result: %+v", result)
 	}
-	if result.Events[0].Type != "service.health.changed" {
-		t.Fatalf("unexpected event type: %s", result.Events[0].Type)
+	if result.Events[0].Key != "service.health.changed" {
+		t.Fatalf("unexpected event key: %s", result.Events[0].Key)
 	}
 	if result.Events[0].Lifecycle != domain.LifecycleUpdated {
 		t.Fatalf("unexpected lifecycle: %s", result.Events[0].Lifecycle)

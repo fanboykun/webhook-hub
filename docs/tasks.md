@@ -26,7 +26,7 @@ This file turns [docs/design.md](./design.md) into trackable implementation work
 
 ## Phase 0: Foundation
 
-Status: `done`
+Status: `in_progress`
 
 Goal: bootstrap the service so code can be added against stable runtime and storage boundaries.
 
@@ -281,6 +281,15 @@ Status: `done`
 
 PRD findings addressed: B6, B7, B10, and the persistence side of the weak event contract.
 
+Why this slice is deeper than "move code out of adapters":
+
+- The old `domain.Event` shape tried to flatten provider-specific facts into one struct and accidentally turned source quirks into an implied platform contract.
+- Fields like `service`, `environment`, `release`, `commit_sha`, `actor`, and `url` look universal, but they are not guaranteed by every source, and they mean different things across sources.
+- That creates a false promise to the rest of the system: renderers, routes, APIs, and persistence start behaving as if every source can always supply the same dimensions.
+- Once those fields are stored directly on the event row, the database reinforces the mistake and every new source gets pressured to "fit" the existing shape instead of declaring its own event contract honestly.
+- The practical failure mode is semantic erosion: adapters invent best-effort mappings, payload-specific detail leaks into generic fields, and missing concepts get hidden instead of modeled.
+- The fix is not merely a registry. The real target is an event envelope that contains only stable cross-source concepts, plus a versioned typed payload owned by the event definition for everything source-specific.
+
 Tasks:
 
 - [x] Introduce a central event-definition registry owning event keys, source binding, payload version, payload schema/view contract, and normalized envelope projection rules.
@@ -288,6 +297,11 @@ Tasks:
 - [x] Persist a normalized event envelope separately from a versioned typed payload (keep the normalized event key in `type`, treat legacy `fields_json` as metadata, and add `payload_version` plus `payload_json`).
 - [x] Stop writing routing outcome metadata back into the same blob as source event payload data.
 - [x] Update `docs/design.md` section 17 (Normalized Event Model) and section 23 (Persistence Model) to reflect the envelope + typed payload split.
+- [x] Recompose `domain.Event` so it stops advertising source-shaped fields as a universal contract.
+- [x] Define the minimal stable normalized envelope explicitly and move source-owned dimensions behind typed payload and metadata accessors.
+- [x] Remove direct renderer, routing, and HTTP dependence on provider-ish event fields that are not guaranteed cross-source.
+- [x] Rename or wrap ambiguous envelope fields where necessary so the contract reads like event-platform language rather than GitHub/Watcher carry-over language.
+- [x] Add round-trip tests that prove a source can omit provider-specific concepts without inventing fake values just to satisfy `domain.Event`.
 
 Acceptance criteria:
 
@@ -296,6 +310,10 @@ Acceptance criteria:
 - [x] Event persistence stores normalized envelope data separately from typed payload data.
 - [x] Routing outcome metadata is no longer written back into the same blob as source event payload data.
 - [x] Registry and persistence changes are covered by tests for key validation, projection, and round-trip storage.
+- [x] `domain.Event` no longer requires adapters to squeeze source-specific concepts into a flat pseudo-universal shape.
+- [x] The event envelope contains only cross-source semantics that routing, operations, and fallback rendering can actually rely on.
+- [x] Source-specific render data is obtained through typed payload handling rather than through flat convenience fields on the event row.
+- [x] Adding a new source no longer requires extending the generic event envelope just to preserve honest provider meaning.
 
 Blocked by: [Issue #10](https://github.com/fanboykun/webhook-hub/issues/10).
 

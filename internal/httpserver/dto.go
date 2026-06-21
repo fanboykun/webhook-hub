@@ -957,7 +957,7 @@ func receiptEventFromDomain(event domain.Event, deliveries []domain.Delivery) re
 	out := receiptEvent{
 		ID:               event.ID,
 		SourceEventID:    event.SourceEventID,
-		Type:             event.Type,
+		Type:             event.Key,
 		Lifecycle:        string(event.Lifecycle),
 		Severity:         string(event.Severity),
 		Title:            event.Title,

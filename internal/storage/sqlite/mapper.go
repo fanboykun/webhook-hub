@@ -30,32 +30,32 @@ func toEventModel(in domain.Event) eventModel {
 		payloadVersion = 1
 	}
 	return eventModel{
-		ID:             in.ID,
-		ReceiptID:      in.ReceiptID,
-		Source:         string(in.Source),
-		IntegrationID:  in.IntegrationID,
-		SourceEventID:  in.SourceEventID,
-		Type:           in.Type,
-		Action:         in.Action,
-		Lifecycle:      string(in.Lifecycle),
-		Severity:       string(in.Severity),
-		Title:          in.Title,
-		Summary:        in.Summary,
-		Service:        in.Service,
-		Environment:    in.Environment,
-		Release:        in.Release,
-		CommitSHA:      in.CommitSHA,
-		Actor:          in.Actor,
-		Fingerprint:    in.Fingerprint,
-		GroupKey:       in.GroupKey,
-		URL:            in.URL,
-		OccurredAt:     in.OccurredAt,
-		LabelsJSON:     in.LabelsJSON,
-		MetadataJSON:   in.MetadataJSON,
-		RouteTraceJSON: in.RouteTraceJSON,
-		PayloadVersion: payloadVersion,
-		PayloadJSON:    in.PayloadJSON,
-		CreatedAt:      in.CreatedAt,
+		ID:               in.ID,
+		ReceiptID:        in.ReceiptID,
+		Source:           string(in.Source),
+		IntegrationID:    in.IntegrationID,
+		SourceEventID:    in.SourceEventID,
+		Key:              in.Key,
+		Action:           in.Action,
+		Lifecycle:        string(in.Lifecycle),
+		Severity:         string(in.Severity),
+		Title:            in.Title,
+		Summary:          in.Summary,
+		ScopeService:     in.Scope.Service,
+		ScopeEnvironment: in.Scope.Environment,
+		LegacyRelease:    legacyMetadataString(in.MetadataJSON, "release"),
+		LegacyCommitSHA:  legacyMetadataString(in.MetadataJSON, "commit_sha"),
+		LegacyActor:      legacyMetadataString(in.MetadataJSON, "actor"),
+		Fingerprint:      in.Fingerprint,
+		GroupKey:         in.GroupKey,
+		SourceURL:        in.SourceURL,
+		OccurredAt:       in.OccurredAt,
+		LabelsJSON:       in.LabelsJSON,
+		MetadataJSON:     in.MetadataJSON,
+		RouteTraceJSON:   in.RouteTraceJSON,
+		PayloadVersion:   payloadVersion,
+		PayloadJSON:      in.PayloadJSON,
+		CreatedAt:        in.CreatedAt,
 	}
 }
 
@@ -78,31 +78,32 @@ func toDeliveryModel(in domain.Delivery) deliveryModel {
 
 func toDomainEvent(in eventModel) domain.Event {
 	return domain.Event{
-		ID:             in.ID,
-		ReceiptID:      in.ReceiptID,
-		Source:         domain.Source(in.Source),
-		IntegrationID:  in.IntegrationID,
-		SourceEventID:  in.SourceEventID,
-		Type:           in.Type,
-		Action:         in.Action,
-		Lifecycle:      domain.Lifecycle(in.Lifecycle),
-		Severity:       domain.Severity(in.Severity),
-		Title:          in.Title,
-		Summary:        in.Summary,
-		Service:        in.Service,
-		Environment:    in.Environment,
-		Release:        in.Release,
-		CommitSHA:      in.CommitSHA,
-		Actor:          in.Actor,
-		Fingerprint:    in.Fingerprint,
-		GroupKey:       in.GroupKey,
-		URL:            in.URL,
-		OccurredAt:     in.OccurredAt,
-		LabelsJSON:     in.LabelsJSON,
-		MetadataJSON:   in.MetadataJSON,
+		ID:        in.ID,
+		ReceiptID: in.ReceiptID,
+		EventEnvelope: domain.EventEnvelope{
+			Source:        domain.Source(in.Source),
+			IntegrationID: in.IntegrationID,
+			SourceEventID: in.SourceEventID,
+			Key:           in.Key,
+			Action:        in.Action,
+			Lifecycle:     domain.Lifecycle(in.Lifecycle),
+			Severity:      domain.Severity(in.Severity),
+			Title:         in.Title,
+			Summary:       in.Summary,
+			Scope: domain.EventScope{
+				Service:     in.ScopeService,
+				Environment: in.ScopeEnvironment,
+			},
+			Fingerprint:    in.Fingerprint,
+			GroupKey:       in.GroupKey,
+			SourceURL:      in.SourceURL,
+			OccurredAt:     in.OccurredAt,
+			LabelsJSON:     in.LabelsJSON,
+			MetadataJSON:   in.MetadataJSON,
+			PayloadVersion: in.PayloadVersion,
+			PayloadJSON:    in.PayloadJSON,
+		},
 		RouteTraceJSON: in.RouteTraceJSON,
-		PayloadVersion: in.PayloadVersion,
-		PayloadJSON:    in.PayloadJSON,
 		CreatedAt:      in.CreatedAt,
 	}
 }
@@ -181,4 +182,16 @@ func toDomainRoute(in routeModel) (domain.Route, error) {
 		CreatedAt:    in.CreatedAt,
 		UpdatedAt:    in.UpdatedAt,
 	}, nil
+}
+
+func legacyMetadataString(metadataJSON []byte, key string) string {
+	if len(metadataJSON) == 0 {
+		return ""
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(metadataJSON, &metadata); err != nil {
+		return ""
+	}
+	value, _ := metadata[key].(string)
+	return value
 }

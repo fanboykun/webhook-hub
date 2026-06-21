@@ -760,38 +760,64 @@ type Lifecycle string
 
 type Severity string
 
+type EventScope struct {
+    Service     string
+    Environment string
+}
+
+type EventEnvelope struct {
+    Source         Source
+    IntegrationID  string
+    SourceEventID  string
+    Key            string
+    Action         string
+    Lifecycle      Lifecycle
+    Severity       Severity
+    Title          string
+    Summary        string
+    Scope          EventScope
+    Fingerprint    string
+    GroupKey       string
+    SourceURL      string
+    OccurredAt     time.Time
+    LabelsJSON     []byte
+    MetadataJSON   []byte
+    PayloadVersion int
+    PayloadJSON    []byte
+}
+
+type EventCandidate struct {
+    EventEnvelope
+}
+
 type Event struct {
-    ID              string
-    ReceiptID       string
-    Source          Source
-    IntegrationID   string
-    SourceEventID   string
-    Type            string
-    Action          string
-    Lifecycle       Lifecycle
-    Severity        Severity
-
-    Title           string
-    Summary         string
-    Service         string
-    Environment     string
-    Release         string
-    CommitSHA       string
-    Actor           string
-
-    Fingerprint     string
-    GroupKey        string
-    URL             string
-
-    OccurredAt      time.Time
-
-    LabelsJSON      []byte
-    MetadataJSON    []byte
-    RouteTraceJSON  []byte
-    PayloadVersion  int
-    PayloadJSON     []byte
+    ID             string
+    ReceiptID      string
+    EventEnvelope
+    RouteTraceJSON []byte
+    CreatedAt      time.Time
 }
 ```
+
+### 17.1 Why a flat event struct is a design trap
+
+The gateway must not treat the normalized event model as a "best common guess" of fields gathered from early sources.
+
+That is the failure mode of the previous flat event shape:
+
+- It made provider-specific facts look universal just because Watcher and GitHub both happened to have something that could be stuffed into fields such as `service`, `release`, `commit_sha`, or `url`.
+- It encouraged adapters to translate source data into whichever existing field looked close enough, even when the meaning was not actually the same.
+- It leaked source contracts into storage and downstream code, so renderers and operational APIs started depending on fields that were never truly guaranteed by the event model.
+- It made every new source harder to add cleanly because the path of least resistance became "how do we squeeze this provider into the current struct?" instead of "what is the honest event definition for this provider?"
+
+The design rule for version 1 is:
+
+- The normalized event envelope may contain only stable cross-source semantics that the rest of the platform can rely on.
+- Source-specific meaning belongs in the event definition and its versioned typed payload.
+- If a value is not trustworthy as a cross-source contract, it must not be promoted into the generic envelope just for convenience.
+- Source adapters should emit `EventCandidate`, not persisted `Event`, so normalization stays independent from receipt IDs, storage timing, and routing trace bookkeeping.
+
+This is why the event-definition registry and typed payload split matter. Without that boundary, the codebase merely relocates provider-specific logic while keeping the same bad contract.
 
 ### Lifecycle values
 

@@ -8,7 +8,7 @@ import (
 	"github.com/fanboykun/webhook-hub/internal/domain"
 )
 
-func Project(input ProjectionInput) (domain.Event, error) {
+func Project(input ProjectionInput) (domain.EventCandidate, error) {
 	payload := Payload{
 		Summary: input.Summary,
 		Watcher: input.Watcher,
@@ -25,39 +25,46 @@ func Project(input ProjectionInput) (domain.Event, error) {
 	metadataJSON := mustJSON(map[string]any{
 		"schema_version": input.SchemaVersion,
 		"triggered_by":   input.TriggeredBy,
+		"actor":          input.Actor,
+		"release":        input.Release,
+		"commit_sha":     input.CommitSHA,
 	})
 	if input.LegacyErrorReason != "" || input.LegacyErrorStage != "" {
 		metadata := map[string]any{
 			"schema_version":     input.SchemaVersion,
 			"triggered_by":       input.TriggeredBy,
+			"actor":              input.Actor,
+			"release":            input.Release,
+			"commit_sha":         input.CommitSHA,
 			"legacy_error_stage": input.LegacyErrorStage,
 			"legacy_error":       input.LegacyErrorReason,
 		}
 		metadataJSON = mustJSON(metadata)
 	}
 
-	return domain.Event{
-		Source:         domain.SourceWatcher,
-		IntegrationID:  input.IntegrationID,
-		SourceEventID:  input.SourceEventID,
-		Type:           string(input.NormalizedType),
-		Action:         action(input.NormalizedType),
-		Lifecycle:      lifecycle(input.NormalizedType),
-		Severity:       severity(input.NormalizedType, input),
-		Title:          firstNonEmpty(input.Summary, fallbackTitle(input.NormalizedType, input)),
-		Summary:        firstNonEmpty(input.Summary, fallbackSummary(input.NormalizedType, input.ServiceName)),
-		Service:        input.ServiceName,
-		Environment:    input.Environment,
-		Release:        input.Release,
-		CommitSHA:      input.CommitSHA,
-		Actor:          input.Actor,
-		Fingerprint:    fingerprint(input),
-		URL:            input.URL,
-		OccurredAt:     input.OccurredAt,
-		LabelsJSON:     labelsJSON,
-		MetadataJSON:   metadataJSON,
-		PayloadVersion: PayloadVersionV1,
-		PayloadJSON:    mustJSON(payload),
+	return domain.EventCandidate{
+		EventEnvelope: domain.EventEnvelope{
+			Source:        domain.SourceWatcher,
+			IntegrationID: input.IntegrationID,
+			SourceEventID: input.SourceEventID,
+			Key:           string(input.NormalizedType),
+			Action:        action(input.NormalizedType),
+			Lifecycle:     lifecycle(input.NormalizedType),
+			Severity:      severity(input.NormalizedType, input),
+			Title:         firstNonEmpty(input.Summary, fallbackTitle(input.NormalizedType, input)),
+			Summary:       firstNonEmpty(input.Summary, fallbackSummary(input.NormalizedType, input.ServiceName)),
+			Scope: domain.EventScope{
+				Service:     input.ServiceName,
+				Environment: input.Environment,
+			},
+			Fingerprint:    fingerprint(input),
+			SourceURL:      input.URL,
+			OccurredAt:     input.OccurredAt,
+			LabelsJSON:     labelsJSON,
+			MetadataJSON:   metadataJSON,
+			PayloadVersion: PayloadVersionV1,
+			PayloadJSON:    mustJSON(payload),
+		},
 	}, nil
 }
 

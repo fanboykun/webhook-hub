@@ -76,32 +76,41 @@ type Receipt struct {
 	CreatedAt        time.Time
 }
 
-type Event struct {
-	ID             string
-	ReceiptID      string
+type EventScope struct {
+	Service     string
+	Environment string
+}
+
+type EventEnvelope struct {
 	Source         Source
 	IntegrationID  string
 	SourceEventID  string
-	Type           string
+	Key            string
 	Action         string
 	Lifecycle      Lifecycle
 	Severity       Severity
 	Title          string
 	Summary        string
-	Service        string
-	Environment    string
-	Release        string
-	CommitSHA      string
-	Actor          string
+	Scope          EventScope
 	Fingerprint    string
 	GroupKey       string
-	URL            string
+	SourceURL      string
 	OccurredAt     time.Time
 	LabelsJSON     []byte
 	MetadataJSON   []byte
-	RouteTraceJSON []byte
 	PayloadVersion int
 	PayloadJSON    []byte
+}
+
+type EventCandidate struct {
+	EventEnvelope
+}
+
+type Event struct {
+	ID        string
+	ReceiptID string
+	EventEnvelope
+	RouteTraceJSON []byte
 	CreatedAt      time.Time
 }
 

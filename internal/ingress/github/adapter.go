@@ -150,7 +150,7 @@ func (a *Adapter) Normalize(_ context.Context, integrationID string, _ config.In
 	return ingress.AdapterResult{
 		SourceDeliveryID: deliveryID,
 		SourceEventType:  eventName,
-		Events:           []domain.Event{event},
+		Events:           []domain.EventCandidate{event},
 	}, nil
 }
 

@@ -240,19 +240,21 @@ func (fakeWatcherAdapter) Verify(_ context.Context, integration config.Integrati
 }
 
 func (fakeWatcherAdapter) Normalize(_ context.Context, integrationID string, _ config.IntegrationConfig, req InboundRequest) (AdapterResult, error) {
-	event := domain.Event{
-		Source:        domain.SourceWatcher,
-		IntegrationID: integrationID,
-		Type:          "watcher.deployment.failed",
-		Action:        "failed",
-		Lifecycle:     domain.LifecycleFailed,
-		Severity:      domain.SeverityError,
-		Title:         "deployment failed",
-		OccurredAt:    req.ReceivedAt,
+	event := domain.EventCandidate{
+		EventEnvelope: domain.EventEnvelope{
+			Source:        domain.SourceWatcher,
+			IntegrationID: integrationID,
+			Key:           "watcher.deployment.failed",
+			Action:        "failed",
+			Lifecycle:     domain.LifecycleFailed,
+			Severity:      domain.SeverityError,
+			Title:         "deployment failed",
+			OccurredAt:    req.ReceivedAt,
+		},
 	}
 	return AdapterResult{
 		SourceDeliveryID: req.Headers.Get("webhook-id"),
 		SourceEventType:  "watcher.deployment.failed",
-		Events:           []domain.Event{event},
+		Events:           []domain.EventCandidate{event},
 	}, nil
 }

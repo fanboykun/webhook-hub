@@ -47,7 +47,7 @@ func (r *ConfigurableRenderer) Render(ctx context.Context, event domain.Event, d
 	if !ok {
 		return r.fallback(ctx, event, destination)
 	}
-	templates, ok := profile[event.Type]
+	templates, ok := profile[event.Key]
 	if !ok {
 		return r.fallback(ctx, event, destination)
 	}
@@ -88,19 +88,18 @@ func (r *ConfigurableRenderer) fallback(ctx context.Context, event domain.Event,
 func (r *ConfigurableRenderer) renderSlack(event domain.Event, destination domain.Destination, tpl *domain.SlackTemplate) (domain.RenderedMessage, error) {
 	ctxVal := config.TemplateContext{
 		Source:      string(event.Source),
-		EventType:   event.Type,
+		EventKey:    event.Key,
+		EventType:   event.Key,
 		Title:       event.Title,
 		Summary:     event.Summary,
 		Severity:    string(event.Severity),
 		Lifecycle:   string(event.Lifecycle),
-		Service:     event.Service,
-		Environment: event.Environment,
-		Release:     event.Release,
-		CommitSHA:   event.CommitSHA,
-		Actor:       event.Actor,
-		URL:         event.URL,
+		Service:     event.Scope.Service,
+		Environment: event.Scope.Environment,
+		SourceURL:   event.SourceURL,
 		OccurredAt:  event.OccurredAt,
 		Payload:     eventPayload(event),
+		Metadata:    eventMetadata(event),
 	}
 
 	escapedCtx := escapeContext(ctxVal, escapeSlack)
@@ -139,7 +138,7 @@ func (r *ConfigurableRenderer) renderSlack(event domain.Event, destination domai
 			{
 				"type": "context",
 				"elements": []map[string]string{
-					{"type": "mrkdwn", "text": fmt.Sprintf("service=%s env=%s release=%s profile=%s", event.Service, event.Environment, event.Release, destination.Profile)},
+					{"type": "mrkdwn", "text": fmt.Sprintf("service=%s env=%s profile=%s", event.Scope.Service, event.Scope.Environment, destination.Profile)},
 				},
 			},
 		},
@@ -159,19 +158,18 @@ func (r *ConfigurableRenderer) renderSlack(event domain.Event, destination domai
 func (r *ConfigurableRenderer) renderTelegram(event domain.Event, destination domain.Destination, tpl *domain.TelegramTemplate) (domain.RenderedMessage, error) {
 	ctxVal := config.TemplateContext{
 		Source:      string(event.Source),
-		EventType:   event.Type,
+		EventKey:    event.Key,
+		EventType:   event.Key,
 		Title:       event.Title,
 		Summary:     event.Summary,
 		Severity:    string(event.Severity),
 		Lifecycle:   string(event.Lifecycle),
-		Service:     event.Service,
-		Environment: event.Environment,
-		Release:     event.Release,
-		CommitSHA:   event.CommitSHA,
-		Actor:       event.Actor,
-		URL:         event.URL,
+		Service:     event.Scope.Service,
+		Environment: event.Scope.Environment,
+		SourceURL:   event.SourceURL,
 		OccurredAt:  event.OccurredAt,
 		Payload:     eventPayload(event),
+		Metadata:    eventMetadata(event),
 	}
 
 	escapedCtx := escapeContext(ctxVal, escapeTelegram)
@@ -185,17 +183,16 @@ func (r *ConfigurableRenderer) renderTelegram(event domain.Event, destination do
 		}
 	} else {
 		text := fmt.Sprintf(
-			"<b>%s</b>\n%s\n\nseverity=%s\nenv=%s\nservice=%s\nrelease=%s\nprofile=%s",
+			"<b>%s</b>\n%s\n\nseverity=%s\nenv=%s\nservice=%s\nprofile=%s",
 			escapeTelegram(event.Title),
 			escapeTelegram(event.Summary),
 			escapeTelegram(string(event.Severity)),
-			escapeTelegram(event.Environment),
-			escapeTelegram(event.Service),
-			escapeTelegram(event.Release),
+			escapeTelegram(event.Scope.Environment),
+			escapeTelegram(event.Scope.Service),
 			escapeTelegram(destination.Profile),
 		)
-		if event.URL != "" {
-			text += fmt.Sprintf("\n<a href=\"%s\">Open source event</a>", escapeTelegram(event.URL))
+		if event.SourceURL != "" {
+			text += fmt.Sprintf("\n<a href=\"%s\">Open source event</a>", escapeTelegram(event.SourceURL))
 		}
 		renderedText = text
 	}
@@ -227,6 +224,7 @@ func escapeTelegram(s string) string {
 
 func escapeContext(ctxVal config.TemplateContext, escapeFn func(string) string) config.TemplateContext {
 	ctxVal.Source = escapeFn(ctxVal.Source)
+	ctxVal.EventKey = escapeFn(ctxVal.EventKey)
 	ctxVal.EventType = escapeFn(ctxVal.EventType)
 	ctxVal.Title = escapeFn(ctxVal.Title)
 	ctxVal.Summary = escapeFn(ctxVal.Summary)
@@ -234,10 +232,7 @@ func escapeContext(ctxVal config.TemplateContext, escapeFn func(string) string) 
 	ctxVal.Lifecycle = escapeFn(ctxVal.Lifecycle)
 	ctxVal.Service = escapeFn(ctxVal.Service)
 	ctxVal.Environment = escapeFn(ctxVal.Environment)
-	ctxVal.Release = escapeFn(ctxVal.Release)
-	ctxVal.CommitSHA = escapeFn(ctxVal.CommitSHA)
-	ctxVal.Actor = escapeFn(ctxVal.Actor)
-	ctxVal.URL = escapeFn(ctxVal.URL)
+	ctxVal.SourceURL = escapeFn(ctxVal.SourceURL)
 	return ctxVal
 }
 
@@ -250,6 +245,17 @@ func eventPayload(event domain.Event) map[string]any {
 		return map[string]any{}
 	}
 	return payload
+}
+
+func eventMetadata(event domain.Event) map[string]any {
+	if len(event.MetadataJSON) == 0 {
+		return map[string]any{}
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(event.MetadataJSON, &metadata); err != nil {
+		return map[string]any{}
+	}
+	return metadata
 }
 
 func executeGoTemplate(name, templateStr string, ctx config.TemplateContext) (string, error) {

@@ -217,24 +217,7 @@ func TestGetEventAndDeliveryAndRetry(t *testing.T) {
 			Status:           domain.ReceiptAccepted,
 			CreatedAt:        now,
 		},
-		Events: []domain.Event{
-			{
-				ID:            "e1",
-				ReceiptID:     "r1",
-				Source:        domain.SourceWatcher,
-				IntegrationID: "watcher-production",
-				Type:          "watcher.deployment.failed",
-				Action:        "deployment.failed",
-				Lifecycle:     domain.LifecycleFailed,
-				Severity:      domain.SeverityError,
-				Title:         "deployment failed",
-				Summary:       "health check failed",
-				Service:       "auth-service",
-				Environment:   "production",
-				OccurredAt:    now,
-				CreatedAt:     now,
-			},
-		},
+		Events: []domain.Event{newTestEvent("e1", "r1", now)},
 		DeliveryByEvent: map[string][]domain.Delivery{
 			"e1": {
 				{
@@ -260,8 +243,8 @@ func TestGetEventAndDeliveryAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get event failed: %v", err)
 	}
-	if event.Type != "watcher.deployment.failed" {
-		t.Fatalf("unexpected event type: %s", event.Type)
+	if event.Key != "watcher.deployment.failed" {
+		t.Fatalf("unexpected event key: %s", event.Key)
 	}
 
 	delivery, err := store.GetDelivery(context.Background(), "d1")
@@ -305,17 +288,7 @@ func TestIngestBatchValidation(t *testing.T) {
 			Status:           domain.ReceiptAccepted,
 			CreatedAt:        now,
 		},
-		Events: []domain.Event{
-			{
-				ID:            "e1",
-				ReceiptID:     "r1",
-				Source:        domain.SourceWatcher,
-				IntegrationID: "watcher-production",
-				Type:          "watcher.deployment.failed",
-				OccurredAt:    now,
-				CreatedAt:     now,
-			},
-		},
+		Events: []domain.Event{newTestEvent("e1", "r1", now)},
 		DeliveryByEvent: map[string][]domain.Delivery{
 			"e1": {
 				{
@@ -354,8 +327,8 @@ func TestIngestBatchValidationRejectsDuplicateEventIDs(t *testing.T) {
 			CreatedAt:        now,
 		},
 		Events: []domain.Event{
-			{ID: "e1", ReceiptID: "r1", Source: domain.SourceWatcher, Type: "watcher.deployment.failed", OccurredAt: now, CreatedAt: now},
-			{ID: "e1", ReceiptID: "r1", Source: domain.SourceWatcher, Type: "watcher.deployment.failed", OccurredAt: now, CreatedAt: now},
+			newTestEvent("e1", "r1", now),
+			newTestEvent("e1", "r1", now),
 		},
 	})
 	if err == nil || err.Error() != `duplicate event id "e1" in ingest batch` {
@@ -379,9 +352,7 @@ func TestIngestBatchValidationRejectsDuplicateDeliveryTargets(t *testing.T) {
 			Status:           domain.ReceiptAccepted,
 			CreatedAt:        now,
 		},
-		Events: []domain.Event{
-			{ID: "e1", ReceiptID: "r1", Source: domain.SourceWatcher, Type: "watcher.deployment.failed", OccurredAt: now, CreatedAt: now},
-		},
+		Events: []domain.Event{newTestEvent("e1", "r1", now)},
 		DeliveryByEvent: map[string][]domain.Delivery{
 			"e1": {
 				{ID: "d1", EventID: "e1", DestinationID: "slack-deployments", DestinationType: domain.DestinationSlack, Status: domain.DeliveryPending, MaxAttempts: 3, NextAttemptAt: now, CreatedAt: now, UpdatedAt: now},
@@ -602,24 +573,7 @@ func seedDeliveryForClaimTests(store *Store, now time.Time, status domain.Delive
 			Status:           domain.ReceiptAccepted,
 			CreatedAt:        now,
 		},
-		Events: []domain.Event{
-			{
-				ID:            "e1",
-				ReceiptID:     "r1",
-				Source:        domain.SourceWatcher,
-				IntegrationID: "watcher-production",
-				Type:          "watcher.deployment.failed",
-				Action:        "deployment.failed",
-				Lifecycle:     domain.LifecycleFailed,
-				Severity:      domain.SeverityError,
-				Title:         "deployment failed",
-				Summary:       "health check failed",
-				Service:       "auth-service",
-				Environment:   "production",
-				OccurredAt:    now,
-				CreatedAt:     now,
-			},
-		},
+		Events: []domain.Event{newTestEvent("e1", "r1", now)},
 		DeliveryByEvent: map[string][]domain.Delivery{
 			"e1": {
 				{
@@ -667,27 +621,33 @@ func seedReceiptWithManyDeliveries(store *Store, now time.Time, count int) error
 			Status:           domain.ReceiptAccepted,
 			CreatedAt:        now,
 		},
-		Events: []domain.Event{
-			{
-				ID:            "e-many",
-				ReceiptID:     "r-many",
-				Source:        domain.SourceWatcher,
-				IntegrationID: "watcher-production",
-				Type:          "watcher.deployment.failed",
-				Action:        "deployment.failed",
-				Lifecycle:     domain.LifecycleFailed,
-				Severity:      domain.SeverityError,
-				Title:         "deployment failed",
-				Summary:       "health check failed",
-				Service:       "auth-service",
-				Environment:   "production",
-				OccurredAt:    now,
-				CreatedAt:     now,
-			},
-		},
+		Events: []domain.Event{newTestEvent("e-many", "r-many", now)},
 		DeliveryByEvent: map[string][]domain.Delivery{
 			"e-many": deliveries,
 		},
 	})
 	return err
+}
+
+func newTestEvent(id, receiptID string, occurredAt time.Time) domain.Event {
+	return domain.Event{
+		ID:        id,
+		ReceiptID: receiptID,
+		EventEnvelope: domain.EventEnvelope{
+			Source:        domain.SourceWatcher,
+			IntegrationID: "watcher-production",
+			Key:           "watcher.deployment.failed",
+			Action:        "deployment.failed",
+			Lifecycle:     domain.LifecycleFailed,
+			Severity:      domain.SeverityError,
+			Title:         "deployment failed",
+			Summary:       "health check failed",
+			Scope: domain.EventScope{
+				Service:     "auth-service",
+				Environment: "production",
+			},
+			OccurredAt: occurredAt,
+		},
+		CreatedAt: occurredAt,
+	}
 }
