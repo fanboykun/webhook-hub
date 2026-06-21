@@ -10,8 +10,17 @@ import (
 
 var ErrDeliveryLeaseLost = errors.New("delivery lease lost")
 
-type Store interface {
+type IngestStore interface {
 	Ingest(ctx context.Context, batch domain.IngestBatch) (domain.IngestResult, error)
+}
+
+type DeliveryStore interface {
+	ClaimDueDeliveries(ctx context.Context, claim domain.ClaimRequest) ([]domain.DeliveryEnvelope, error)
+	CompleteAttempt(ctx context.Context, result domain.AttemptResult) error
+	RecoverExpiredLeases(ctx context.Context, now time.Time) (int64, error)
+}
+
+type AdminStore interface {
 	ListIntegrations(ctx context.Context) ([]domain.ManagedIntegration, error)
 	GetIntegration(ctx context.Context, id string) (domain.ManagedIntegration, error)
 	CreateIntegration(ctx context.Context, integration domain.ManagedIntegration) error
@@ -39,10 +48,13 @@ type Store interface {
 	ListDeliveriesByEventIDs(ctx context.Context, eventIDs []string) (map[string][]domain.Delivery, error)
 	ListDeliveries(ctx context.Context, filter domain.DeliveryFilter) (domain.DeliveryPage, error)
 	GetDelivery(ctx context.Context, id string) (domain.Delivery, error)
-	ClaimDueDeliveries(ctx context.Context, claim domain.ClaimRequest) ([]domain.DeliveryEnvelope, error)
-	CompleteAttempt(ctx context.Context, result domain.AttemptResult) error
-	RecoverExpiredLeases(ctx context.Context, now time.Time) (int64, error)
 	RetryDelivery(ctx context.Context, id string, now time.Time) error
 	Ping(ctx context.Context) error
+}
+
+type Store interface {
+	IngestStore
+	DeliveryStore
+	AdminStore
 	Close() error
 }

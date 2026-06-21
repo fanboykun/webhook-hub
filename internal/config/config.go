@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fanboykun/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/eventcatalog"
 	eventdefaults "github.com/fanboykun/webhook-hub/internal/eventcatalog/defaults"
 	"github.com/spf13/viper"
 )
@@ -28,7 +29,19 @@ type Config struct {
 	RendererProfiles map[string]ProfileConfig     `mapstructure:"renderer_profiles"`
 }
 
-type ProfileConfig map[string]DestinationTemplates
+type ProfileConfig struct {
+	Bindings []ProfileBindingConfig `mapstructure:"bindings"`
+}
+
+type ProfileBindingConfig struct {
+	Event     EventBindingConfig   `mapstructure:"event"`
+	Templates DestinationTemplates `mapstructure:"templates"`
+}
+
+type EventBindingConfig struct {
+	Source domain.Source `mapstructure:"source"`
+	Key    string        `mapstructure:"key"`
+}
 
 type DestinationTemplates struct {
 	Slack    *SlackTemplateConfig    `mapstructure:"slack"`
@@ -311,13 +324,37 @@ func (c *Config) ValidateRendererProfiles() error {
 	var errs []error
 	registry := eventdefaults.Registry()
 	for profileName, profile := range c.RendererProfiles {
-		for eventType, destTemplates := range profile {
-			if !registry.IsKnown(eventType) {
-				errs = append(errs, fmt.Errorf("profile %q binding: unknown event type %q", profileName, eventType))
+		if len(profile.Bindings) == 0 {
+			errs = append(errs, fmt.Errorf("profile %q must contain at least one binding", profileName))
+			continue
+		}
+		seen := make(map[string]struct{}, len(profile.Bindings))
+		for _, binding := range profile.Bindings {
+			if binding.Event.Source == "" {
+				errs = append(errs, fmt.Errorf("profile %q binding source is required", profileName))
 				continue
 			}
-			if err := validateDestinationTemplates(destTemplates); err != nil {
-				errs = append(errs, fmt.Errorf("profile %q binding %q: %w", profileName, eventType, err))
+			key := strings.TrimSpace(binding.Event.Key)
+			if key == "" {
+				errs = append(errs, fmt.Errorf("profile %q binding key is required", profileName))
+				continue
+			}
+			composite := string(binding.Event.Source) + ":" + key
+			if _, exists := seen[composite]; exists {
+				errs = append(errs, fmt.Errorf("profile %q contains duplicate binding %s", profileName, composite))
+				continue
+			}
+			seen[composite] = struct{}{}
+			if _, ok := registry.Resolve(binding.Event.Source, key); !ok {
+				if definition, exists := registry.Get(eventcatalog.Key(key)); exists && definition.Source != binding.Event.Source {
+					errs = append(errs, fmt.Errorf("profile %q binding %q belongs to source %q, not %q", profileName, key, definition.Source, binding.Event.Source))
+				} else {
+					errs = append(errs, fmt.Errorf("profile %q binding: unknown event %q for source %q", profileName, key, binding.Event.Source))
+				}
+				continue
+			}
+			if err := validateDestinationTemplates(binding.Templates); err != nil {
+				errs = append(errs, fmt.Errorf("profile %q binding %s: %w", profileName, composite, err))
 			}
 		}
 	}
@@ -326,6 +363,9 @@ func (c *Config) ValidateRendererProfiles() error {
 
 func validateDestinationTemplates(dt DestinationTemplates) error {
 	var errs []error
+	if dt.Slack == nil && dt.Telegram == nil && dt.Email == nil {
+		errs = append(errs, errors.New("at least one destination template is required"))
+	}
 	if dt.Slack != nil {
 		if err := ValidateTemplate(dt.Slack.Title); err != nil {
 			errs = append(errs, fmt.Errorf("slack title: %w", err))

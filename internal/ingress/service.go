@@ -19,7 +19,7 @@ import (
 )
 
 type Service struct {
-	store        storage.Store
+	store        storage.IngestStore
 	cfg          config.Config
 	adapters     *Registry
 	router       *routing.Engine
@@ -29,7 +29,7 @@ type Service struct {
 	destinations *runtimeconfig.DestinationRegistry
 }
 
-func NewService(store storage.Store, cfg config.Config, adapters *Registry, router *routing.Engine, integrations *runtimeconfig.IntegrationRegistry, destinations *runtimeconfig.DestinationRegistry, clk clock.Clock, logger *slog.Logger) *Service {
+func NewService(store storage.IngestStore, cfg config.Config, adapters *Registry, router *routing.Engine, integrations *runtimeconfig.IntegrationRegistry, destinations *runtimeconfig.DestinationRegistry, clk clock.Clock, logger *slog.Logger) *Service {
 	return &Service{
 		store:        store,
 		cfg:          cfg,

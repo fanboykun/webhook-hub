@@ -102,6 +102,17 @@ func (r *Registry) Get(key Key) (Definition, bool) {
 	return definition, true
 }
 
+func (r *Registry) Resolve(source domain.Source, key string) (Definition, bool) {
+	definition, ok := r.Get(Key(key))
+	if !ok {
+		return Definition{}, false
+	}
+	if definition.Source != source {
+		return Definition{}, false
+	}
+	return definition, true
+}
+
 func (r *Registry) IsKnown(key string) bool {
 	_, ok := r.Get(Key(key))
 	return ok

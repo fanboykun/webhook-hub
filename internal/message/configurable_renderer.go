@@ -42,12 +42,7 @@ func (r *ConfigurableRenderer) Render(ctx context.Context, event domain.Event, d
 	if r.profiles == nil {
 		return r.fallback(ctx, event, destination)
 	}
-
-	profile, ok := r.profiles.Get(destination.Profile)
-	if !ok {
-		return r.fallback(ctx, event, destination)
-	}
-	templates, ok := profile[event.Key]
+	templates, ok := r.profiles.Resolve(destination.Profile, event)
 	if !ok {
 		return r.fallback(ctx, event, destination)
 	}

@@ -105,10 +105,18 @@ func TestBootstrapDynamicConfigSeedsAndReloadsRegistries(t *testing.T) {
 		},
 		RendererProfiles: map[string]config.ProfileConfig{
 			"detailed": {
-				"watcher.deployment.failed": {
-					Slack: &config.SlackTemplateConfig{
-						Title: "{{.Title}}",
-						Body:  "{{.Summary}}",
+				Bindings: []config.ProfileBindingConfig{
+					{
+						Event: config.EventBindingConfig{
+							Source: domain.SourceWatcher,
+							Key:    "watcher.deployment.failed",
+						},
+						Templates: config.DestinationTemplates{
+							Slack: &config.SlackTemplateConfig{
+								Title: "{{.Title}}",
+								Body:  "{{.Summary}}",
+							},
+						},
 					},
 				},
 			},
@@ -231,7 +239,10 @@ func (routeStoreStub) ListDeliveries(context.Context, domain.DeliveryFilter) (do
 	return domain.DeliveryPage{}, nil
 }
 func (routeStoreStub) RetryDelivery(context.Context, string, time.Time) error { return nil }
-func (routeStoreStub) Ping(context.Context) error                             { return nil }
+func (routeStoreStub) GetEvent(context.Context, string) (domain.Event, error) {
+	return domain.Event{}, context.Canceled
+}
+func (routeStoreStub) Ping(context.Context) error { return nil }
 
 type seedStoreStub struct {
 	routeStoreStub

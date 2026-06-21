@@ -141,10 +141,15 @@ func TestRendererProfileCRUD(t *testing.T) {
 	profile := domain.ManagedRendererProfile{
 		ID: "detailed",
 		Profile: domain.RendererProfile{
-			"watcher.deployment.failed": {
-				Slack: &domain.SlackTemplate{
-					Title: "{{.Title}}",
-					Body:  "{{.Summary}}",
+			Bindings: []domain.RendererBinding{
+				{
+					Event: domain.EventRef{Source: domain.SourceWatcher, Key: "watcher.deployment.failed"},
+					Templates: domain.RendererDestinationTemplates{
+						Slack: &domain.SlackTemplate{
+							Title: "{{.Title}}",
+							Body:  "{{.Summary}}",
+						},
+					},
 				},
 			},
 		},
@@ -168,11 +173,11 @@ func TestRendererProfileCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get renderer profile failed: %v", err)
 	}
-	if got.Profile["watcher.deployment.failed"].Slack == nil {
+	if len(got.Profile.Bindings) != 1 || got.Profile.Bindings[0].Templates.Slack == nil {
 		t.Fatalf("expected slack template in stored profile, got %+v", got.Profile)
 	}
 
-	profile.Profile["watcher.deployment.failed"] = domain.RendererDestinationTemplates{
+	profile.Profile.Bindings[0].Templates = domain.RendererDestinationTemplates{
 		Telegram: &domain.TelegramTemplate{Text: "<b>{{.Title}}</b>"},
 	}
 	profile.UpdatedAt = now.Add(time.Minute)
@@ -184,7 +189,7 @@ func TestRendererProfileCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get updated renderer profile failed: %v", err)
 	}
-	if updated.Profile["watcher.deployment.failed"].Telegram == nil {
+	if len(updated.Profile.Bindings) != 1 || updated.Profile.Bindings[0].Templates.Telegram == nil {
 		t.Fatalf("expected telegram template after update, got %+v", updated.Profile)
 	}
 

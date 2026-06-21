@@ -94,7 +94,7 @@ func (s *Service) validateRendererProfile(profile domain.ManagedRendererProfile)
 	if strings.TrimSpace(profile.ID) == "" {
 		return errors.New("renderer profile id is required")
 	}
-	if len(profile.Profile) == 0 {
+	if len(profile.Profile.Bindings) == 0 {
 		return errors.New("renderer profile must contain at least one event binding")
 	}
 	cfg := config.Config{

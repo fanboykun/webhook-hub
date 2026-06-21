@@ -212,15 +212,23 @@ func TestValidateRendererProfiles(t *testing.T) {
 				},
 				RendererProfiles: map[string]ProfileConfig{
 					"detailed": {
-						"watcher.deployment.started": {
-							Slack: &SlackTemplateConfig{
-								Title: "[{{.Severity}}] {{.Title}}",
-								Body:  "{{.Summary}} - {{.OccurredAt.Format \"2006-01-02\"}}",
+						Bindings: []ProfileBindingConfig{
+							{
+								Event: EventBindingConfig{Source: domain.SourceWatcher, Key: "watcher.deployment.started"},
+								Templates: DestinationTemplates{
+									Slack: &SlackTemplateConfig{
+										Title: "[{{.Severity}}] {{.Title}}",
+										Body:  "{{.Summary}} - {{.OccurredAt.Format \"2006-01-02\"}}",
+									},
+								},
 							},
-						},
-						"watcher.deployment.failed": {
-							Slack: &SlackTemplateConfig{
-								Title: "ALERT: {{.Title}} failed in {{.Environment}}",
+							{
+								Event: EventBindingConfig{Source: domain.SourceWatcher, Key: "watcher.deployment.failed"},
+								Templates: DestinationTemplates{
+									Slack: &SlackTemplateConfig{
+										Title: "ALERT: {{.Title}} failed in {{.Environment}}",
+									},
+								},
 							},
 						},
 					},
@@ -237,9 +245,14 @@ func TestValidateRendererProfiles(t *testing.T) {
 				Retry:    RetryConfig{MaxAttempts: 1},
 				RendererProfiles: map[string]ProfileConfig{
 					"detailed": {
-						"watcher.deployment.failed": {
-							Slack: &SlackTemplateConfig{
-								Title: "[{{.Severity}",
+						Bindings: []ProfileBindingConfig{
+							{
+								Event: EventBindingConfig{Source: domain.SourceWatcher, Key: "watcher.deployment.failed"},
+								Templates: DestinationTemplates{
+									Slack: &SlackTemplateConfig{
+										Title: "[{{.Severity}",
+									},
+								},
 							},
 						},
 					},
@@ -256,9 +269,14 @@ func TestValidateRendererProfiles(t *testing.T) {
 				Retry:    RetryConfig{MaxAttempts: 1},
 				RendererProfiles: map[string]ProfileConfig{
 					"detailed": {
-						"watcher.deployment.failed": {
-							Slack: &SlackTemplateConfig{
-								Title: "[{{.ReceiptID}}]",
+						Bindings: []ProfileBindingConfig{
+							{
+								Event: EventBindingConfig{Source: domain.SourceWatcher, Key: "watcher.deployment.failed"},
+								Templates: DestinationTemplates{
+									Slack: &SlackTemplateConfig{
+										Title: "[{{.ReceiptID}}]",
+									},
+								},
 							},
 						},
 					},
@@ -292,9 +310,14 @@ func TestValidateRendererProfiles(t *testing.T) {
 				Retry:    RetryConfig{MaxAttempts: 1},
 				RendererProfiles: map[string]ProfileConfig{
 					"detailed": {
-						"unknown.event.type": {
-							Slack: &SlackTemplateConfig{
-								Title: "{{.Title}}",
+						Bindings: []ProfileBindingConfig{
+							{
+								Event: EventBindingConfig{Source: domain.SourceWatcher, Key: "unknown.event.type"},
+								Templates: DestinationTemplates{
+									Slack: &SlackTemplateConfig{
+										Title: "{{.Title}}",
+									},
+								},
 							},
 						},
 					},
@@ -311,9 +334,14 @@ func TestValidateRendererProfiles(t *testing.T) {
 				Retry:    RetryConfig{MaxAttempts: 1},
 				RendererProfiles: map[string]ProfileConfig{
 					"detailed": {
-						"watcher.invalid.event": {
-							Slack: &SlackTemplateConfig{
-								Title: "{{.Title}}",
+						Bindings: []ProfileBindingConfig{
+							{
+								Event: EventBindingConfig{Source: domain.SourceWatcher, Key: "watcher.invalid.event"},
+								Templates: DestinationTemplates{
+									Slack: &SlackTemplateConfig{
+										Title: "{{.Title}}",
+									},
+								},
 							},
 						},
 					},

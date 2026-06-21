@@ -357,7 +357,7 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get renderer profile expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"event_type":"watcher.deployment.failed"`) {
+	if !strings.Contains(rec.Body.String(), `"key":"watcher.deployment.failed"`) {
 		t.Fatalf("expected renderer profile detail to include event binding, body=%s", rec.Body.String())
 	}
 
@@ -379,7 +379,7 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 		t.Fatalf("expected preserved integration secret, got %q", integration.Secret)
 	}
 
-	updateProfileBody := []byte(`{"id":"detailed","bindings":[{"event_type":"watcher.deployment.failed","templates":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"},"telegram":{"text":"<b>{{.Title}}</b>"}}}]}`)
+	updateProfileBody := []byte(`{"id":"detailed","bindings":[{"event":{"source":"watcher","key":"watcher.deployment.failed"},"templates":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"},"telegram":{"text":"<b>{{.Title}}</b>"}}}]}`)
 	req = httptest.NewRequest(http.MethodPut, "/api/v1/renderer-profiles/detailed", bytes.NewReader(updateProfileBody))
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	req.Header.Set("Content-Type", "application/json")
@@ -393,7 +393,14 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get renderer profile failed: %v", err)
 	}
-	if profile.Profile["watcher.deployment.failed"].Telegram == nil {
+	var found *domain.RendererDestinationTemplates
+	for _, b := range profile.Profile.Bindings {
+		if b.Event.Key == "watcher.deployment.failed" {
+			found = &b.Templates
+			break
+		}
+	}
+	if found == nil || found.Telegram == nil {
 		t.Fatalf("expected updated renderer profile to persist telegram template, got %+v", profile.Profile)
 	}
 
@@ -444,7 +451,7 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 		t.Fatalf("delete integration expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	createProfileBody := []byte(`{"id":"ops-compact","bindings":[{"event_type":"watcher.deployment.failed","templates":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"},"telegram":{"text":"<b>{{.Title}}</b>\n{{.Summary}}"}}}]}`)
+	createProfileBody := []byte(`{"id":"ops-compact","bindings":[{"event":{"source":"watcher","key":"watcher.deployment.failed"},"templates":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"},"telegram":{"text":"<b>{{.Title}}</b>\n{{.Summary}}"}}}]}`)
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/renderer-profiles", bytes.NewReader(createProfileBody))
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	req.Header.Set("Content-Type", "application/json")
@@ -914,10 +921,18 @@ func testConfig(t *testing.T) config.Config {
 		},
 		RendererProfiles: map[string]config.ProfileConfig{
 			"detailed": {
-				"watcher.deployment.failed": {
-					Slack: &config.SlackTemplateConfig{
-						Title: "{{.Title}}",
-						Body:  "{{.Summary}}",
+				Bindings: []config.ProfileBindingConfig{
+					{
+						Event: config.EventBindingConfig{
+							Source: domain.SourceWatcher,
+							Key:    "watcher.deployment.failed",
+						},
+						Templates: config.DestinationTemplates{
+							Slack: &config.SlackTemplateConfig{
+								Title: "{{.Title}}",
+								Body:  "{{.Summary}}",
+							},
+						},
 					},
 				},
 			},

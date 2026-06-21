@@ -452,8 +452,13 @@ type rendererProfileRequestModel struct {
 }
 
 type rendererEventBindingModel struct {
-	EventType routeEventType         `json:"event_type" doc:"Normalized event type that should use these templates."`
+	Event     rendererEventRefModel  `json:"event" doc:"Exact source event contract this binding targets."`
 	Templates rendererTemplatesModel `json:"templates" doc:"Templates used when this specific event type is rendered."`
+}
+
+type rendererEventRefModel struct {
+	Source routeSource    `json:"source" doc:"Normalized source that owns this event contract."`
+	Key    routeEventType `json:"key" doc:"Normalized event key within that source catalog."`
 }
 
 type rendererTemplatesModel struct {
@@ -629,33 +634,52 @@ func domainRendererProfileFromRequestModel(in rendererProfileRequestModel) (doma
 }
 
 func rendererBindingModelsFromDomain(in domain.RendererProfile) []rendererEventBindingModel {
-	keys := make([]string, 0, len(in))
-	for eventType := range in {
-		keys = append(keys, eventType)
-	}
-	sort.Strings(keys)
+	bindings := append([]domain.RendererBinding(nil), in.Bindings...)
+	sort.Slice(bindings, func(i, j int) bool {
+		left := string(bindings[i].Event.Source) + ":" + bindings[i].Event.Key
+		right := string(bindings[j].Event.Source) + ":" + bindings[j].Event.Key
+		return left < right
+	})
 
-	out := make([]rendererEventBindingModel, 0, len(keys))
-	for _, eventType := range keys {
+	out := make([]rendererEventBindingModel, 0, len(bindings))
+	for _, binding := range bindings {
 		out = append(out, rendererEventBindingModel{
-			EventType: routeEventType(eventType),
-			Templates: rendererTemplatesModelFromDomain(in[eventType]),
+			Event: rendererEventRefModel{
+				Source: routeSource(binding.Event.Source),
+				Key:    routeEventType(binding.Event.Key),
+			},
+			Templates: rendererTemplatesModelFromDomain(binding.Templates),
 		})
 	}
 	return out
 }
 
 func domainRendererProfileBodyFromBindingModels(in []rendererEventBindingModel) (domain.RendererProfile, error) {
-	out := make(domain.RendererProfile, len(in))
+	out := domain.RendererProfile{
+		Bindings: make([]domain.RendererBinding, 0, len(in)),
+	}
+	seen := make(map[string]struct{}, len(in))
 	for _, binding := range in {
-		eventType := strings.TrimSpace(string(binding.EventType))
-		if eventType == "" {
-			return nil, fmt.Errorf("renderer profile binding event_type is required")
+		source := domain.Source(strings.TrimSpace(string(binding.Event.Source)))
+		if source == "" {
+			return domain.RendererProfile{}, fmt.Errorf("renderer profile binding event.source is required")
 		}
-		if _, exists := out[eventType]; exists {
-			return nil, fmt.Errorf("renderer profile contains duplicate binding %s", eventType)
+		eventKey := strings.TrimSpace(string(binding.Event.Key))
+		if eventKey == "" {
+			return domain.RendererProfile{}, fmt.Errorf("renderer profile binding event.key is required")
 		}
-		out[eventType] = rendererTemplatesModelToDomain(binding.Templates)
+		composite := string(source) + ":" + eventKey
+		if _, exists := seen[composite]; exists {
+			return domain.RendererProfile{}, fmt.Errorf("renderer profile contains duplicate binding %s", composite)
+		}
+		seen[composite] = struct{}{}
+		out.Bindings = append(out.Bindings, domain.RendererBinding{
+			Event: domain.EventRef{
+				Source: source,
+				Key:    eventKey,
+			},
+			Templates: rendererTemplatesModelToDomain(binding.Templates),
+		})
 	}
 	return out, nil
 }

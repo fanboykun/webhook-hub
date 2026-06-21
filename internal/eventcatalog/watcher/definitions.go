@@ -78,12 +78,12 @@ type FailedDeliveryDetails struct {
 }
 
 type Payload struct {
-	Summary        string                `json:"summary,omitempty"`
-	Watcher        WatcherRef            `json:"watcher"`
-	Service        *ServiceDetails       `json:"service,omitempty"`
-	Version        *VersionDetails       `json:"version,omitempty"`
-	Attempt        *AttemptDetails       `json:"attempt,omitempty"`
-	Health         *HealthDetails        `json:"health,omitempty"`
+	Summary        string                 `json:"summary,omitempty"`
+	Watcher        WatcherRef             `json:"watcher"`
+	Service        *ServiceDetails        `json:"service,omitempty"`
+	Version        *VersionDetails        `json:"version,omitempty"`
+	Attempt        *AttemptDetails        `json:"attempt,omitempty"`
+	Health         *HealthDetails         `json:"health,omitempty"`
 	FailedDelivery *FailedDeliveryDetails `json:"failed_delivery,omitempty"`
 }
 

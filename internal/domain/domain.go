@@ -241,12 +241,6 @@ type RenderedMessage struct {
 	Body        []byte
 }
 
-type Destination struct {
-	ID      string
-	Type    DestinationType
-	Profile string
-}
-
 type ManagedIntegration struct {
 	ID           string
 	Source       Source
@@ -255,47 +249,6 @@ type ManagedIntegration struct {
 	ReplayWindow time.Duration
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
-}
-
-type ManagedDestination struct {
-	ID         string
-	Type       DestinationType
-	WebhookURL string
-	BotToken   string
-	ChatID     string
-	APIBaseURL string
-	Profile    string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-}
-
-type RendererProfile map[string]RendererDestinationTemplates
-
-type RendererDestinationTemplates struct {
-	Slack    *SlackTemplate    `json:"slack,omitempty"`
-	Telegram *TelegramTemplate `json:"telegram,omitempty"`
-	Email    *EmailTemplate    `json:"email,omitempty"`
-}
-
-type SlackTemplate struct {
-	Title string `json:"title,omitempty"`
-	Body  string `json:"body,omitempty"`
-}
-
-type TelegramTemplate struct {
-	Text string `json:"text,omitempty"`
-}
-
-type EmailTemplate struct {
-	Subject string `json:"subject,omitempty"`
-	Body    string `json:"body,omitempty"`
-}
-
-type ManagedRendererProfile struct {
-	ID        string
-	Profile   RendererProfile
-	CreatedAt time.Time
-	UpdatedAt time.Time
 }
 
 type AttemptResult struct {

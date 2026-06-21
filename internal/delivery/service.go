@@ -18,7 +18,7 @@ import (
 )
 
 type Service struct {
-	store          storage.Store
+	store          storage.DeliveryStore
 	cfg            config.Config
 	clock          clock.Clock
 	logger         *slog.Logger
@@ -28,11 +28,11 @@ type Service struct {
 	destinations   *runtimeconfig.DestinationRegistry
 }
 
-func NewService(store storage.Store, cfg config.Config, destinations *runtimeconfig.DestinationRegistry, profiles *runtimeconfig.RendererProfileRegistry, clk clock.Clock, logger *slog.Logger) *Service {
+func NewService(store storage.DeliveryStore, cfg config.Config, destinations *runtimeconfig.DestinationRegistry, profiles *runtimeconfig.RendererProfileRegistry, clk clock.Clock, logger *slog.Logger) *Service {
 	return NewServiceWithRenderer(store, cfg, destinations, profiles, clk, logger, message.NewConfigurableRenderer(profiles, nil, nil))
 }
 
-func NewServiceWithRenderer(store storage.Store, cfg config.Config, destinations *runtimeconfig.DestinationRegistry, profiles *runtimeconfig.RendererProfileRegistry, clk clock.Clock, logger *slog.Logger, renderer message.Renderer) *Service {
+func NewServiceWithRenderer(store storage.DeliveryStore, cfg config.Config, destinations *runtimeconfig.DestinationRegistry, profiles *runtimeconfig.RendererProfileRegistry, clk clock.Clock, logger *slog.Logger, renderer message.Renderer) *Service {
 	return &Service{
 		store:          store,
 		cfg:            cfg,

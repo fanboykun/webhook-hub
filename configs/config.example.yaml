@@ -65,27 +65,37 @@ destinations:
 
 renderer_profiles:
   detailed:
-    watcher:
-      default:
-        slack:
-          title: "[{{.Severity}}] {{.Title}}"
-          body: "*Service:* {{.Service}}\n*Environment:* {{.Environment}}\n*Release:* {{.Release}}\n*Summary:* {{.Summary}}"
-        telegram:
-          text: "<b>[{{.Severity}}] {{.Title}}</b>\nService: <code>{{.Service}}</code>\nEnvironment: <b>{{.Environment}}</b>\nRelease: <code>{{.Release}}</code>\nSummary: <i>{{.Summary}}</i>"
-    github:
-      default:
-        slack:
-          title: "[{{.Severity}}] {{.Title}}"
-          body: "*Actor:* {{.Actor}}\n*Summary:* {{.Summary}}\n*URL:* {{.URL}}"
-        telegram:
-          text: "<b>[{{.Severity}}] {{.Title}}</b>\nActor: <code>{{.Actor}}</code>\nSummary: <i>{{.Summary}}</i>\n<a href=\"{{.URL}}\">Open event</a>"
+    bindings:
+      - event:
+          source: watcher
+          key: watcher.deployment.failed
+        templates:
+          slack:
+            title: "[{{.Severity}}] {{.Title}}"
+            body: "*Service:* {{.Service}}\n*Environment:* {{.Environment}}\n*Release:* {{ index .Metadata \"release\" }}\n*Summary:* {{.Summary}}"
+          telegram:
+            text: "<b>[{{.Severity}}] {{.Title}}</b>\nService: <code>{{.Service}}</code>\nEnvironment: <b>{{.Environment}}</b>\nRelease: <code>{{ index .Metadata \"release\" }}</code>\nSummary: <i>{{.Summary}}</i>"
+      - event:
+          source: github
+          key: github.workflow.failed
+        templates:
+          slack:
+            title: "[{{.Severity}}] {{.Title}}"
+            body: "*Actor:* {{ index .Metadata \"actor\" }}\n*Summary:* {{.Summary}}\n*URL:* {{.SourceURL}}"
+          telegram:
+            text: "<b>[{{.Severity}}] {{.Title}}</b>\nActor: <code>{{ index .Metadata \"actor\" }}</code>\nSummary: <i>{{.Summary}}</i>\n<a href=\"{{.SourceURL}}\">Open event</a>"
 
   compact:
-    watcher:
-      default:
-        telegram:
-          text: "<b>{{.Title}}</b>\n{{.Summary}}"
-    github:
-      default:
-        telegram:
-          text: "<b>{{.Title}}</b>\n{{.Summary}}"
+    bindings:
+      - event:
+          source: watcher
+          key: watcher.deployment.failed
+        templates:
+          telegram:
+            text: "<b>{{.Title}}</b>\n{{.Summary}}"
+      - event:
+          source: github
+          key: github.workflow.failed
+        templates:
+          telegram:
+            text: "<b>{{.Title}}</b>\n{{.Summary}}"

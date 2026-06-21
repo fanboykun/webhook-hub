@@ -91,6 +91,21 @@ func (r *RendererProfileRegistry) Get(id string) (domain.RendererProfile, bool) 
 	return cloneDomainProfile(item), ok
 }
 
+func (r *RendererProfileRegistry) Resolve(profileID string, event domain.Event) (domain.RendererDestinationTemplates, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	profile, ok := r.items[profileID]
+	if !ok {
+		return domain.RendererDestinationTemplates{}, false
+	}
+	for _, binding := range profile.Bindings {
+		if binding.Event.Source == event.Source && binding.Event.Key == event.Key {
+			return cloneDomainTemplates(binding.Templates), true
+		}
+	}
+	return domain.RendererDestinationTemplates{}, false
+}
+
 func StaticIntegrations(cfg config.Config) []domain.ManagedIntegration {
 	out := make([]domain.ManagedIntegration, 0, len(cfg.Integrations))
 	for id, integration := range cfg.Integrations {
@@ -184,17 +199,30 @@ func RendererProfilesToConfig(items map[string]domain.RendererProfile) map[strin
 }
 
 func profileConfigToDomain(in config.ProfileConfig) domain.RendererProfile {
-	out := make(domain.RendererProfile, len(in))
-	for eventType, templates := range in {
-		out[eventType] = destinationTemplatesToDomain(templates)
+	out := domain.RendererProfile{
+		Bindings: make([]domain.RendererBinding, 0, len(in.Bindings)),
+	}
+	for _, binding := range in.Bindings {
+		out.Bindings = append(out.Bindings, domain.RendererBinding{
+			Event: domain.EventRef{
+				Source: binding.Event.Source,
+				Key:    binding.Event.Key,
+			},
+			Templates: destinationTemplatesToDomain(binding.Templates),
+		})
 	}
 	return out
 }
 
 func cloneDomainProfile(in domain.RendererProfile) domain.RendererProfile {
-	out := make(domain.RendererProfile, len(in))
-	for eventType, templates := range in {
-		out[eventType] = cloneDomainTemplates(templates)
+	out := domain.RendererProfile{
+		Bindings: make([]domain.RendererBinding, 0, len(in.Bindings)),
+	}
+	for _, binding := range in.Bindings {
+		out.Bindings = append(out.Bindings, domain.RendererBinding{
+			Event:     binding.Event,
+			Templates: cloneDomainTemplates(binding.Templates),
+		})
 	}
 	return out
 }
@@ -217,9 +245,17 @@ func cloneDomainTemplates(in domain.RendererDestinationTemplates) domain.Rendere
 }
 
 func domainProfileToConfig(in domain.RendererProfile) config.ProfileConfig {
-	out := make(config.ProfileConfig, len(in))
-	for eventType, templates := range in {
-		out[eventType] = destinationTemplatesFromDomain(templates)
+	out := config.ProfileConfig{
+		Bindings: make([]config.ProfileBindingConfig, 0, len(in.Bindings)),
+	}
+	for _, binding := range in.Bindings {
+		out.Bindings = append(out.Bindings, config.ProfileBindingConfig{
+			Event: config.EventBindingConfig{
+				Source: binding.Event.Source,
+				Key:    binding.Event.Key,
+			},
+			Templates: destinationTemplatesFromDomain(binding.Templates),
+		})
 	}
 	return out
 }

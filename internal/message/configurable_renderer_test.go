@@ -55,16 +55,24 @@ func TestEscapeTelegram(t *testing.T) {
 func TestConfigurableRenderer_Resolution(t *testing.T) {
 	profiles := map[string]domain.RendererProfile{
 		"my-profile": {
-			"watcher.deployment.failed": {
-				Slack: &domain.SlackTemplate{
-					Title: "Failed Override Title",
-					Body:  "Failed Override Body",
+			Bindings: []domain.RendererBinding{
+				{
+					Event: domain.EventRef{Source: domain.SourceWatcher, Key: "watcher.deployment.failed"},
+					Templates: domain.RendererDestinationTemplates{
+						Slack: &domain.SlackTemplate{
+							Title: "Failed Override Title",
+							Body:  "Failed Override Body",
+						},
+					},
 				},
-			},
-			"watcher.deployment.started": {
-				Slack: &domain.SlackTemplate{
-					Title: "Default Title",
-					Body:  "Default Body",
+				{
+					Event: domain.EventRef{Source: domain.SourceWatcher, Key: "watcher.deployment.started"},
+					Templates: domain.RendererDestinationTemplates{
+						Slack: &domain.SlackTemplate{
+							Title: "Default Title",
+							Body:  "Default Body",
+						},
+					},
 				},
 			},
 		},
@@ -129,22 +137,30 @@ func TestConfigurableRenderer_Resolution(t *testing.T) {
 func TestGoldenIntegration(t *testing.T) {
 	profiles := map[string]domain.RendererProfile{
 		"templated-profile": {
-			"watcher.deployment.started": {
-				Slack: &domain.SlackTemplate{
-					Title: "[{{.Severity}}] {{.Title}}",
-					Body:  "Service {{.Service}} environment {{.Environment}}",
+			Bindings: []domain.RendererBinding{
+				{
+					Event: domain.EventRef{Source: domain.SourceWatcher, Key: "watcher.deployment.started"},
+					Templates: domain.RendererDestinationTemplates{
+						Slack: &domain.SlackTemplate{
+							Title: "[{{.Severity}}] {{.Title}}",
+							Body:  "Service {{.Service}} environment {{.Environment}}",
+						},
+						Telegram: &domain.TelegramTemplate{
+							Text: "<b>[{{.Severity}}] {{.Title}}</b>\nService: {{.Service}}",
+						},
+					},
 				},
-				Telegram: &domain.TelegramTemplate{
-					Text: "<b>[{{.Severity}}] {{.Title}}</b>\nService: {{.Service}}",
-				},
-			},
-			"watcher.deployment.failed": {
-				Slack: &domain.SlackTemplate{
-					Title: "CRITICAL ALERT: {{.Title}} failed in {{.Environment}}",
-					Body:  "*Service:* {{.Service}}\n*Release:* {{ index .Metadata \"release\" }}\n*Error/Summary:* {{.Summary}}",
-				},
-				Telegram: &domain.TelegramTemplate{
-					Text: "🚨 <b>{{.Title}} ({{.Lifecycle}})</b> 🚨\nEnvironment: <b>{{.Environment}}</b>\nService: <code>{{.Service}}</code>\nRelease: <code>{{ index .Metadata \"release\" }}</code>\nSummary: <i>{{.Summary}}</i>\n<a href=\"{{.SourceURL}}\">View Details</a>",
+				{
+					Event: domain.EventRef{Source: domain.SourceWatcher, Key: "watcher.deployment.failed"},
+					Templates: domain.RendererDestinationTemplates{
+						Slack: &domain.SlackTemplate{
+							Title: "CRITICAL ALERT: {{.Title}} failed in {{.Environment}}",
+							Body:  "*Service:* {{.Service}}\n*Release:* {{ index .Metadata \"release\" }}\n*Error/Summary:* {{.Summary}}",
+						},
+						Telegram: &domain.TelegramTemplate{
+							Text: "🚨 <b>{{.Title}} ({{.Lifecycle}})</b> 🚨\nEnvironment: <b>{{.Environment}}</b>\nService: <code>{{.Service}}</code>\nRelease: <code>{{ index .Metadata \"release\" }}</code>\nSummary: <i>{{.Summary}}</i>\n<a href=\"{{.SourceURL}}\">View Details</a>",
+						},
+					},
 				},
 			},
 		},
