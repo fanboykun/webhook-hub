@@ -212,19 +212,15 @@ func TestValidateRendererProfiles(t *testing.T) {
 				},
 				RendererProfiles: map[string]ProfileConfig{
 					"detailed": {
-						"watcher": SourceConfig{
-							Default: DestinationTemplates{
-								Slack: &SlackTemplateConfig{
-									Title: "[{{.Severity}}] {{.Title}}",
-									Body:  "{{.Summary}} - {{.OccurredAt.Format \"2006-01-02\"}}",
-								},
+						"watcher.deployment.started": {
+							Slack: &SlackTemplateConfig{
+								Title: "[{{.Severity}}] {{.Title}}",
+								Body:  "{{.Summary}} - {{.OccurredAt.Format \"2006-01-02\"}}",
 							},
-							Overrides: map[string]DestinationTemplates{
-								"watcher.deployment.failed": {
-									Slack: &SlackTemplateConfig{
-										Title: "ALERT: {{.Title}} failed in {{.Environment}}",
-									},
-								},
+						},
+						"watcher.deployment.failed": {
+							Slack: &SlackTemplateConfig{
+								Title: "ALERT: {{.Title}} failed in {{.Environment}}",
 							},
 						},
 					},
@@ -241,11 +237,9 @@ func TestValidateRendererProfiles(t *testing.T) {
 				Retry:    RetryConfig{MaxAttempts: 1},
 				RendererProfiles: map[string]ProfileConfig{
 					"detailed": {
-						"watcher": SourceConfig{
-							Default: DestinationTemplates{
-								Slack: &SlackTemplateConfig{
-									Title: "[{{.Severity}",
-								},
+						"watcher.deployment.failed": {
+							Slack: &SlackTemplateConfig{
+								Title: "[{{.Severity}",
 							},
 						},
 					},
@@ -262,11 +256,9 @@ func TestValidateRendererProfiles(t *testing.T) {
 				Retry:    RetryConfig{MaxAttempts: 1},
 				RendererProfiles: map[string]ProfileConfig{
 					"detailed": {
-						"watcher": SourceConfig{
-							Default: DestinationTemplates{
-								Slack: &SlackTemplateConfig{
-									Title: "[{{.ReceiptID}}]",
-								},
+						"watcher.deployment.failed": {
+							Slack: &SlackTemplateConfig{
+								Title: "[{{.ReceiptID}}]",
 							},
 						},
 					},
@@ -292,7 +284,7 @@ func TestValidateRendererProfiles(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "unknown source name",
+			name: "unknown event type binding",
 			cfg: Config{
 				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
 				Database: testDatabaseConfig(),
@@ -300,11 +292,9 @@ func TestValidateRendererProfiles(t *testing.T) {
 				Retry:    RetryConfig{MaxAttempts: 1},
 				RendererProfiles: map[string]ProfileConfig{
 					"detailed": {
-						"unknown_source": SourceConfig{
-							Default: DestinationTemplates{
-								Slack: &SlackTemplateConfig{
-									Title: "{{.Title}}",
-								},
+						"unknown.event.type": {
+							Slack: &SlackTemplateConfig{
+								Title: "{{.Title}}",
 							},
 						},
 					},
@@ -313,7 +303,7 @@ func TestValidateRendererProfiles(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "unknown event type override",
+			name: "unknown event type binding variant",
 			cfg: Config{
 				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
 				Database: testDatabaseConfig(),
@@ -321,13 +311,9 @@ func TestValidateRendererProfiles(t *testing.T) {
 				Retry:    RetryConfig{MaxAttempts: 1},
 				RendererProfiles: map[string]ProfileConfig{
 					"detailed": {
-						"watcher": SourceConfig{
-							Overrides: map[string]DestinationTemplates{
-								"watcher.invalid.event": {
-									Slack: &SlackTemplateConfig{
-										Title: "{{.Title}}",
-									},
-								},
+						"watcher.invalid.event": {
+							Slack: &SlackTemplateConfig{
+								Title: "{{.Title}}",
 							},
 						},
 					},

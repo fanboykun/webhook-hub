@@ -47,30 +47,14 @@ func (r *ConfigurableRenderer) Render(ctx context.Context, event domain.Event, d
 	if !ok {
 		return r.fallback(ctx, event, destination)
 	}
-
-	sourceConfig, ok := profile[string(event.Source)]
+	templates, ok := profile[event.Type]
 	if !ok {
 		return r.fallback(ctx, event, destination)
 	}
 
-	var dt config.DestinationTemplates
-	hasOverride := false
-	if sourceConfig.Overrides != nil {
-		if o, ok := sourceConfig.Overrides[event.Type]; ok {
-			dt = o
-			hasOverride = true
-		}
-	}
-
 	switch destination.Type {
 	case domain.DestinationSlack:
-		var slackTpl *config.SlackTemplateConfig
-		if hasOverride && dt.Slack != nil {
-			slackTpl = dt.Slack
-		} else if sourceConfig.Default.Slack != nil {
-			slackTpl = sourceConfig.Default.Slack
-		}
-
+		slackTpl := templates.Slack
 		if slackTpl == nil {
 			return r.slackFallback.Render(ctx, event, destination)
 		}
@@ -78,13 +62,7 @@ func (r *ConfigurableRenderer) Render(ctx context.Context, event domain.Event, d
 		return r.renderSlack(event, destination, slackTpl)
 
 	case domain.DestinationTelegram:
-		var telegramTpl *config.TelegramTemplateConfig
-		if hasOverride && dt.Telegram != nil {
-			telegramTpl = dt.Telegram
-		} else if sourceConfig.Default.Telegram != nil {
-			telegramTpl = sourceConfig.Default.Telegram
-		}
-
+		telegramTpl := templates.Telegram
 		if telegramTpl == nil {
 			return r.telegramFallback.Render(ctx, event, destination)
 		}
@@ -107,8 +85,10 @@ func (r *ConfigurableRenderer) fallback(ctx context.Context, event domain.Event,
 	}
 }
 
-func (r *ConfigurableRenderer) renderSlack(event domain.Event, destination domain.Destination, tpl *config.SlackTemplateConfig) (domain.RenderedMessage, error) {
+func (r *ConfigurableRenderer) renderSlack(event domain.Event, destination domain.Destination, tpl *domain.SlackTemplate) (domain.RenderedMessage, error) {
 	ctxVal := config.TemplateContext{
+		Source:      string(event.Source),
+		EventType:   event.Type,
 		Title:       event.Title,
 		Summary:     event.Summary,
 		Severity:    string(event.Severity),
@@ -120,6 +100,7 @@ func (r *ConfigurableRenderer) renderSlack(event domain.Event, destination domai
 		Actor:       event.Actor,
 		URL:         event.URL,
 		OccurredAt:  event.OccurredAt,
+		Payload:     eventPayload(event),
 	}
 
 	escapedCtx := escapeContext(ctxVal, escapeSlack)
@@ -175,8 +156,10 @@ func (r *ConfigurableRenderer) renderSlack(event domain.Event, destination domai
 	}, nil
 }
 
-func (r *ConfigurableRenderer) renderTelegram(event domain.Event, destination domain.Destination, tpl *config.TelegramTemplateConfig) (domain.RenderedMessage, error) {
+func (r *ConfigurableRenderer) renderTelegram(event domain.Event, destination domain.Destination, tpl *domain.TelegramTemplate) (domain.RenderedMessage, error) {
 	ctxVal := config.TemplateContext{
+		Source:      string(event.Source),
+		EventType:   event.Type,
 		Title:       event.Title,
 		Summary:     event.Summary,
 		Severity:    string(event.Severity),
@@ -188,6 +171,7 @@ func (r *ConfigurableRenderer) renderTelegram(event domain.Event, destination do
 		Actor:       event.Actor,
 		URL:         event.URL,
 		OccurredAt:  event.OccurredAt,
+		Payload:     eventPayload(event),
 	}
 
 	escapedCtx := escapeContext(ctxVal, escapeTelegram)
@@ -242,6 +226,8 @@ func escapeTelegram(s string) string {
 }
 
 func escapeContext(ctxVal config.TemplateContext, escapeFn func(string) string) config.TemplateContext {
+	ctxVal.Source = escapeFn(ctxVal.Source)
+	ctxVal.EventType = escapeFn(ctxVal.EventType)
 	ctxVal.Title = escapeFn(ctxVal.Title)
 	ctxVal.Summary = escapeFn(ctxVal.Summary)
 	ctxVal.Severity = escapeFn(ctxVal.Severity)
@@ -253,6 +239,17 @@ func escapeContext(ctxVal config.TemplateContext, escapeFn func(string) string) 
 	ctxVal.Actor = escapeFn(ctxVal.Actor)
 	ctxVal.URL = escapeFn(ctxVal.URL)
 	return ctxVal
+}
+
+func eventPayload(event domain.Event) map[string]any {
+	if len(event.PayloadJSON) == 0 {
+		return map[string]any{}
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(event.PayloadJSON, &payload); err != nil {
+		return map[string]any{}
+	}
+	return payload
 }
 
 func executeGoTemplate(name, templateStr string, ctx config.TemplateContext) (string, error) {

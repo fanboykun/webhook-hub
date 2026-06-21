@@ -357,8 +357,8 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get renderer profile expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"source":"watcher"`) {
-		t.Fatalf("expected renderer profile detail to include watcher source, body=%s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), `"event_type":"watcher.deployment.failed"`) {
+		t.Fatalf("expected renderer profile detail to include event binding, body=%s", rec.Body.String())
 	}
 
 	updateIntegrationBody := []byte(`{"id":"github-main","source":"github","secret":"[REDACTED]"}`)
@@ -379,7 +379,7 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 		t.Fatalf("expected preserved integration secret, got %q", integration.Secret)
 	}
 
-	updateProfileBody := []byte(`{"id":"detailed","sources":[{"source":"watcher","default":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"},"telegram":{"text":"<b>{{.Title}}</b>"}}}]}`)
+	updateProfileBody := []byte(`{"id":"detailed","bindings":[{"event_type":"watcher.deployment.failed","templates":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"},"telegram":{"text":"<b>{{.Title}}</b>"}}}]}`)
 	req = httptest.NewRequest(http.MethodPut, "/api/v1/renderer-profiles/detailed", bytes.NewReader(updateProfileBody))
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	req.Header.Set("Content-Type", "application/json")
@@ -393,7 +393,7 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get renderer profile failed: %v", err)
 	}
-	if profile.Profile["watcher"].Default.Telegram == nil {
+	if profile.Profile["watcher.deployment.failed"].Telegram == nil {
 		t.Fatalf("expected updated renderer profile to persist telegram template, got %+v", profile.Profile)
 	}
 
@@ -444,7 +444,7 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 		t.Fatalf("delete integration expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	createProfileBody := []byte(`{"id":"ops-compact","sources":[{"source":"watcher","default":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"}},"overrides":[{"event_type":"watcher.deployment.failed","templates":{"telegram":{"text":"<b>{{.Title}}</b>\n{{.Summary}}"}}}]}]}`)
+	createProfileBody := []byte(`{"id":"ops-compact","bindings":[{"event_type":"watcher.deployment.failed","templates":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"},"telegram":{"text":"<b>{{.Title}}</b>\n{{.Summary}}"}}}]}`)
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/renderer-profiles", bytes.NewReader(createProfileBody))
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	req.Header.Set("Content-Type", "application/json")
@@ -912,12 +912,10 @@ func testConfig(t *testing.T) config.Config {
 		},
 		RendererProfiles: map[string]config.ProfileConfig{
 			"detailed": {
-				"watcher": config.SourceConfig{
-					Default: config.DestinationTemplates{
-						Slack: &config.SlackTemplateConfig{
-							Title: "{{.Title}}",
-							Body:  "{{.Summary}}",
-						},
+				"watcher.deployment.failed": {
+					Slack: &config.SlackTemplateConfig{
+						Title: "{{.Title}}",
+						Body:  "{{.Summary}}",
 					},
 				},
 			},
@@ -946,7 +944,7 @@ func newTestServer(t *testing.T, cfg config.Config, store *sqlite.Store, routes 
 	integrations := runtimeconfig.NewIntegrationRegistry(cfg.Integrations)
 	destinations := runtimeconfig.NewDestinationRegistry(cfg.Destinations)
 	service := ingress.NewService(store, cfg, testRegistry(), engine, integrations, destinations, clock.Real{}, observability.NewLogger(cfg.Logging))
-	appService := app.NewService(cfg, clock.Real{}, store, service, engine, integrations, destinations, runtimeconfig.NewRendererProfileRegistry(cfg.RendererProfiles))
+	appService := app.NewService(cfg, clock.Real{}, store, service, engine, integrations, destinations, runtimeconfig.NewRendererProfileRegistry(runtimeconfig.RendererProfilesFromConfig(cfg.RendererProfiles)))
 	if routes != nil {
 		engine.Replace(routes)
 	}
@@ -959,7 +957,7 @@ func newEncryptedTestServer(t *testing.T, cfg config.Config, store *sqlite.Store
 	integrations := runtimeconfig.NewIntegrationRegistry(cfg.Integrations)
 	destinations := runtimeconfig.NewDestinationRegistry(cfg.Destinations)
 	service := ingress.NewService(store, cfg, testRegistry(), engine, integrations, destinations, clock.Real{}, observability.NewLogger(cfg.Logging))
-	appService := app.NewService(cfg, clock.Real{}, store, service, engine, integrations, destinations, runtimeconfig.NewRendererProfileRegistry(cfg.RendererProfiles))
+	appService := app.NewService(cfg, clock.Real{}, store, service, engine, integrations, destinations, runtimeconfig.NewRendererProfileRegistry(runtimeconfig.RendererProfilesFromConfig(cfg.RendererProfiles)))
 	if err := appService.BootstrapDynamicConfig(context.Background()); err != nil {
 		t.Fatalf("bootstrap dynamic config: %v", err)
 	}

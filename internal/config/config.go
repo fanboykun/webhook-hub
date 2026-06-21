@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fanboykun/webhook-hub/internal/domain"
+	eventdefaults "github.com/fanboykun/webhook-hub/internal/eventcatalog/defaults"
 	"github.com/spf13/viper"
 )
 
@@ -27,12 +28,7 @@ type Config struct {
 	RendererProfiles map[string]ProfileConfig     `mapstructure:"renderer_profiles"`
 }
 
-type ProfileConfig map[string]SourceConfig
-
-type SourceConfig struct {
-	Default   DestinationTemplates            `mapstructure:"default"`
-	Overrides map[string]DestinationTemplates `mapstructure:"overrides"`
-}
+type ProfileConfig map[string]DestinationTemplates
 
 type DestinationTemplates struct {
 	Slack    *SlackTemplateConfig    `mapstructure:"slack"`
@@ -55,6 +51,8 @@ type EmailTemplateConfig struct {
 }
 
 type TemplateContext struct {
+	Source      string
+	EventType   string
 	Title       string
 	Summary     string
 	Severity    string
@@ -66,6 +64,7 @@ type TemplateContext struct {
 	Actor       string
 	URL         string
 	OccurredAt  time.Time
+	Payload     map[string]any
 }
 
 type ServerConfig struct {
@@ -311,25 +310,15 @@ func (c Config) Validate() error {
 
 func (c *Config) ValidateRendererProfiles() error {
 	var errs []error
+	registry := eventdefaults.Registry()
 	for profileName, profile := range c.RendererProfiles {
-		for sourceName, sourceConfig := range profile {
-			if !domain.IsKnownSource(domain.Source(sourceName)) {
-				errs = append(errs, fmt.Errorf("profile %q: unknown source %q", profileName, sourceName))
+		for eventType, destTemplates := range profile {
+			if !registry.IsKnown(eventType) {
+				errs = append(errs, fmt.Errorf("profile %q binding: unknown event type %q", profileName, eventType))
 				continue
 			}
-
-			if err := validateDestinationTemplates(sourceConfig.Default); err != nil {
-				errs = append(errs, fmt.Errorf("profile %q source %q default: %w", profileName, sourceName, err))
-			}
-
-			for eventType, destTemplates := range sourceConfig.Overrides {
-				if !domain.IsKnownEventType(eventType) {
-					errs = append(errs, fmt.Errorf("profile %q source %q override: unknown event type %q", profileName, sourceName, eventType))
-					continue
-				}
-				if err := validateDestinationTemplates(destTemplates); err != nil {
-					errs = append(errs, fmt.Errorf("profile %q source %q override %q: %w", profileName, sourceName, eventType, err))
-				}
+			if err := validateDestinationTemplates(destTemplates); err != nil {
+				errs = append(errs, fmt.Errorf("profile %q binding %q: %w", profileName, eventType, err))
 			}
 		}
 	}

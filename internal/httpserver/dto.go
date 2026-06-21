@@ -10,6 +10,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/fanboykun/webhook-hub/internal/domain"
+	eventdefaults "github.com/fanboykun/webhook-hub/internal/eventcatalog/defaults"
 )
 
 type watcherWebhookInput struct {
@@ -46,17 +47,14 @@ type healthResponse struct {
 }
 
 type deliveryDetailInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
-	DeliveryID    string `path:"delivery_id"`
+	DeliveryID string `path:"delivery_id"`
 }
 
 type receiptDetailInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
-	ReceiptID     string `path:"receipt_id"`
+	ReceiptID string `path:"receipt_id"`
 }
 
 type listReceiptsInput struct {
-	Authorization string             `header:"Authorization" hidden:"true"`
 	Status        routeReceiptStatus `query:"status" doc:"Filter by receipt status."`
 	Source        routeSource        `query:"source" doc:"Filter by source name such as watcher or github."`
 	IntegrationID string             `query:"integration_id" doc:"Filter by the configured integration identifier."`
@@ -67,7 +65,6 @@ type listReceiptsInput struct {
 }
 
 type listDeliveriesInput struct {
-	Authorization string              `header:"Authorization" hidden:"true"`
 	Status        routeDeliveryStatus `query:"status" doc:"Filter by delivery status."`
 	DestinationID string              `query:"destination_id" doc:"Filter by destination identifier, such as slack-deployments."`
 	EventID       string              `query:"event_id" doc:"Filter by normalized event identifier."`
@@ -78,8 +75,7 @@ type listDeliveriesInput struct {
 }
 
 type retryDeliveryInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
-	DeliveryID    string `path:"delivery_id"`
+	DeliveryID string `path:"delivery_id"`
 }
 
 type deliveryResponse struct {
@@ -202,28 +198,23 @@ type routeMatchModel struct {
 }
 
 type listRoutesInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
 }
 
 type routeDetailInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
-	RouteID       string `path:"route_id"`
+	RouteID string `path:"route_id"`
 }
 
 type createRouteInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
-	Body          routeModel
+	Body routeModel
 }
 
 type updateRouteInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
-	RouteID       string `path:"route_id"`
-	Body          routeModel
+	RouteID string `path:"route_id"`
+	Body    routeModel
 }
 
 type routeDeleteInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
-	RouteID       string `path:"route_id"`
+	RouteID string `path:"route_id"`
 }
 
 type routeResponse struct {
@@ -387,28 +378,23 @@ type telegramDestinationRequestModel struct {
 }
 
 type listIntegrationsInput struct {
-	Authorization string      `header:"Authorization" hidden:"true"`
-	Source        routeSource `query:"source" doc:"Filter by integration source such as watcher or github."`
+	Source routeSource `query:"source" doc:"Filter by integration source such as watcher or github."`
 }
 
 type integrationDetailInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
 	IntegrationID string `path:"integration_id" doc:"Stable integration identifier, for example github-main or watcher-production." example:"github-main"`
 }
 
 type createIntegrationInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
-	Body          integrationRequestModel
+	Body integrationRequestModel
 }
 
 type updateIntegrationInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
 	IntegrationID string `path:"integration_id" doc:"Stable integration identifier, for example github-main or watcher-production." example:"github-main"`
 	Body          integrationRequestModel
 }
 
 type deleteIntegrationInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
 	IntegrationID string `path:"integration_id" doc:"Stable integration identifier, for example github-main or watcher-production." example:"github-main"`
 }
 
@@ -423,28 +409,23 @@ type integrationResponse struct {
 }
 
 type listDestinationsInput struct {
-	Authorization string               `header:"Authorization" hidden:"true"`
-	Type          routeDestinationType `query:"type" doc:"Filter by destination type such as slack or telegram."`
+	Type routeDestinationType `query:"type" doc:"Filter by destination type such as slack or telegram."`
 }
 
 type destinationDetailInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
 	DestinationID string `path:"destination_id" doc:"Stable destination identifier, for example slack-deployments or telegram-bot." example:"slack-deployments"`
 }
 
 type createDestinationInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
-	Body          destinationRequestModel
+	Body destinationRequestModel
 }
 
 type updateDestinationInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
 	DestinationID string `path:"destination_id" doc:"Stable destination identifier, for example slack-deployments or telegram-bot." example:"slack-deployments"`
 	Body          destinationRequestModel
 }
 
 type deleteDestinationInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
 	DestinationID string `path:"destination_id" doc:"Stable destination identifier, for example slack-deployments or telegram-bot." example:"slack-deployments"`
 }
 
@@ -460,24 +441,18 @@ type destinationResponse struct {
 
 type rendererProfileModel struct {
 	ID        string                      `json:"id" doc:"Stable renderer profile identifier referenced by destinations." example:"detailed"`
-	Sources   []rendererSourceConfigModel `json:"sources" doc:"Per-source template configuration contained in this profile."`
+	Bindings  []rendererEventBindingModel `json:"bindings" doc:"Event-specific template bindings contained in this profile."`
 	CreatedAt time.Time                   `json:"created_at,omitempty" doc:"When the renderer profile was created."`
 	UpdatedAt time.Time                   `json:"updated_at,omitempty" doc:"When the renderer profile was last updated."`
 }
 
 type rendererProfileRequestModel struct {
-	ID      string                      `json:"id" doc:"Stable renderer profile identifier referenced by destinations." example:"compact"`
-	Sources []rendererSourceConfigModel `json:"sources" doc:"Per-source template configuration contained in this profile."`
+	ID       string                      `json:"id" doc:"Stable renderer profile identifier referenced by destinations." example:"compact"`
+	Bindings []rendererEventBindingModel `json:"bindings" doc:"Event-specific template bindings contained in this profile."`
 }
 
-type rendererSourceConfigModel struct {
-	Source    routeSource                  `json:"source" doc:"Normalized source whose events will use these templates."`
-	Default   rendererTemplatesModel       `json:"default" doc:"Fallback templates used for this source when no event-specific override matches."`
-	Overrides []rendererEventOverrideModel `json:"overrides,omitempty" doc:"Optional event-type-specific template overrides for this source."`
-}
-
-type rendererEventOverrideModel struct {
-	EventType routeEventType         `json:"event_type" doc:"Normalized event type that should use the override templates."`
+type rendererEventBindingModel struct {
+	EventType routeEventType         `json:"event_type" doc:"Normalized event type that should use these templates."`
 	Templates rendererTemplatesModel `json:"templates" doc:"Templates used when this specific event type is rendered."`
 }
 
@@ -502,28 +477,23 @@ type rendererEmailTemplateModel struct {
 }
 
 type listRendererProfilesInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
 }
 
 type rendererProfileDetailInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
-	ProfileID     string `path:"profile_id" doc:"Stable renderer profile identifier, for example detailed or compact." example:"detailed"`
+	ProfileID string `path:"profile_id" doc:"Stable renderer profile identifier, for example detailed or compact." example:"detailed"`
 }
 
 type createRendererProfileInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
-	Body          rendererProfileRequestModel
+	Body rendererProfileRequestModel
 }
 
 type updateRendererProfileInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
-	ProfileID     string `path:"profile_id" doc:"Stable renderer profile identifier, for example detailed or compact." example:"detailed"`
-	Body          rendererProfileRequestModel
+	ProfileID string `path:"profile_id" doc:"Stable renderer profile identifier, for example detailed or compact." example:"detailed"`
+	Body      rendererProfileRequestModel
 }
 
 type deleteRendererProfileInput struct {
-	Authorization string `header:"Authorization" hidden:"true"`
-	ProfileID     string `path:"profile_id" doc:"Stable renderer profile identifier, for example detailed or compact." example:"detailed"`
+	ProfileID string `path:"profile_id" doc:"Stable renderer profile identifier, for example detailed or compact." example:"detailed"`
 }
 
 type rendererProfilesResponse struct {
@@ -641,14 +611,14 @@ func domainDestinationFromRequestModel(in destinationRequestModel) domain.Manage
 func rendererProfileModelFromDomain(in domain.ManagedRendererProfile) rendererProfileModel {
 	return rendererProfileModel{
 		ID:        in.ID,
-		Sources:   rendererSourceModelsFromDomain(in.Profile),
+		Bindings:  rendererBindingModelsFromDomain(in.Profile),
 		CreatedAt: in.CreatedAt,
 		UpdatedAt: in.UpdatedAt,
 	}
 }
 
 func domainRendererProfileFromRequestModel(in rendererProfileRequestModel) (domain.ManagedRendererProfile, error) {
-	profile, err := domainRendererProfileBodyFromSourceModels(in.Sources)
+	profile, err := domainRendererProfileBodyFromBindingModels(in.Bindings)
 	if err != nil {
 		return domain.ManagedRendererProfile{}, err
 	}
@@ -658,65 +628,34 @@ func domainRendererProfileFromRequestModel(in rendererProfileRequestModel) (doma
 	}, nil
 }
 
-func rendererSourceModelsFromDomain(in domain.RendererProfile) []rendererSourceConfigModel {
+func rendererBindingModelsFromDomain(in domain.RendererProfile) []rendererEventBindingModel {
 	keys := make([]string, 0, len(in))
-	for source := range in {
-		keys = append(keys, source)
+	for eventType := range in {
+		keys = append(keys, eventType)
 	}
 	sort.Strings(keys)
 
-	out := make([]rendererSourceConfigModel, 0, len(keys))
-	for _, source := range keys {
-		sourceConfig := in[source]
-		item := rendererSourceConfigModel{
-			Source:  routeSource(source),
-			Default: rendererTemplatesModelFromDomain(sourceConfig.Default),
-		}
-		overrideKeys := make([]string, 0, len(sourceConfig.Overrides))
-		for eventType := range sourceConfig.Overrides {
-			overrideKeys = append(overrideKeys, eventType)
-		}
-		sort.Strings(overrideKeys)
-		for _, eventType := range overrideKeys {
-			item.Overrides = append(item.Overrides, rendererEventOverrideModel{
-				EventType: routeEventType(eventType),
-				Templates: rendererTemplatesModelFromDomain(sourceConfig.Overrides[eventType]),
-			})
-		}
-		out = append(out, item)
+	out := make([]rendererEventBindingModel, 0, len(keys))
+	for _, eventType := range keys {
+		out = append(out, rendererEventBindingModel{
+			EventType: routeEventType(eventType),
+			Templates: rendererTemplatesModelFromDomain(in[eventType]),
+		})
 	}
 	return out
 }
 
-func domainRendererProfileBodyFromSourceModels(in []rendererSourceConfigModel) (domain.RendererProfile, error) {
+func domainRendererProfileBodyFromBindingModels(in []rendererEventBindingModel) (domain.RendererProfile, error) {
 	out := make(domain.RendererProfile, len(in))
-	for _, sourceModel := range in {
-		sourceKey := strings.TrimSpace(string(sourceModel.Source))
-		if sourceKey == "" {
-			return nil, fmt.Errorf("renderer profile source is required")
+	for _, binding := range in {
+		eventType := strings.TrimSpace(string(binding.EventType))
+		if eventType == "" {
+			return nil, fmt.Errorf("renderer profile binding event_type is required")
 		}
-		if _, exists := out[sourceKey]; exists {
-			return nil, fmt.Errorf("renderer profile contains duplicate source %s", sourceKey)
+		if _, exists := out[eventType]; exists {
+			return nil, fmt.Errorf("renderer profile contains duplicate binding %s", eventType)
 		}
-
-		sourceConfig := domain.RendererSourceConfig{
-			Default:   rendererTemplatesModelToDomain(sourceModel.Default),
-			Overrides: make(map[string]domain.RendererDestinationTemplates, len(sourceModel.Overrides)),
-		}
-		for _, override := range sourceModel.Overrides {
-			eventType := strings.TrimSpace(string(override.EventType))
-			if eventType == "" {
-				return nil, fmt.Errorf("renderer profile override event_type is required")
-			}
-			if _, exists := sourceConfig.Overrides[eventType]; exists {
-				return nil, fmt.Errorf("renderer profile source %s contains duplicate override %s", sourceKey, eventType)
-			}
-			sourceConfig.Overrides[eventType] = rendererTemplatesModelToDomain(override.Templates)
-		}
-		if len(sourceConfig.Overrides) == 0 {
-			sourceConfig.Overrides = nil
-		}
-		out[sourceKey] = sourceConfig
+		out[eventType] = rendererTemplatesModelToDomain(binding.Templates)
 	}
 	return out, nil
 }
@@ -904,7 +843,7 @@ func (routeEventType) Schema(r huma.Registry) *huma.Schema {
 	return &huma.Schema{
 		Type:        "string",
 		Description: "Normalized event type used for routing.",
-		Enum:        enumValues(domain.KnownEventTypeStrings()),
+		Enum:        enumValues(eventdefaults.Registry().EventTypes()),
 	}
 }
 
@@ -1014,7 +953,7 @@ func receiptItemFromDomain(receipt domain.Receipt) receiptItem {
 }
 
 func receiptEventFromDomain(event domain.Event, deliveries []domain.Delivery) receiptEvent {
-	routeMatchCount, routeIDs, destinationIDs := routeSummaryFromFields(event.FieldsJSON)
+	routeMatchCount, routeIDs, destinationIDs := routeSummaryFromTrace(event.RouteTraceJSON)
 	out := receiptEvent{
 		ID:               event.ID,
 		SourceEventID:    event.SourceEventID,
@@ -1035,34 +974,13 @@ func receiptEventFromDomain(event domain.Event, deliveries []domain.Delivery) re
 	return out
 }
 
-func routeSummaryFromFields(fieldsJSON []byte) (int, []string, []string) {
-	if len(fieldsJSON) == 0 {
+func routeSummaryFromTrace(traceJSON []byte) (int, []string, []string) {
+	if len(traceJSON) == 0 {
 		return 0, nil, nil
 	}
-	var fields map[string]any
-	if err := json.Unmarshal(fieldsJSON, &fields); err != nil {
+	var trace domain.RouteTrace
+	if err := json.Unmarshal(traceJSON, &trace); err != nil {
 		return 0, nil, nil
 	}
-
-	routeMatchCount := 0
-	if value, ok := fields["route_match_count"].(float64); ok {
-		routeMatchCount = int(value)
-	}
-	routeIDs := stringSliceFromAny(fields["route_ids"])
-	destinationIDs := stringSliceFromAny(fields["destination_ids"])
-	return routeMatchCount, routeIDs, destinationIDs
-}
-
-func stringSliceFromAny(v any) []string {
-	items, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(items))
-	for _, item := range items {
-		if s, ok := item.(string); ok {
-			out = append(out, s)
-		}
-	}
-	return out
+	return trace.RouteMatchCount, trace.RouteIDs, trace.DestinationIDs
 }

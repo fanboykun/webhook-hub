@@ -17,7 +17,7 @@ import (
 func TestCreateRouteNormalizesBlankSelectorValues(t *testing.T) {
 	svc := newTestService()
 
-	route, err := svc.CreateRoute(context.Background(), "Bearer admin-secret", domain.Route{
+	route, err := svc.CreateRoute(context.Background(), domain.Route{
 		ID:          "watcher-all-events",
 		Description: "Send all Watcher events to Slack",
 		Match: domain.RouteMatchCriteria{
@@ -40,7 +40,7 @@ func TestCreateRouteNormalizesBlankSelectorValues(t *testing.T) {
 func TestCreateRouteRejectsUnknownEnumValues(t *testing.T) {
 	svc := newTestService()
 
-	_, err := svc.CreateRoute(context.Background(), "Bearer admin-secret", domain.Route{
+	_, err := svc.CreateRoute(context.Background(), domain.Route{
 		ID: "watcher-all-events",
 		Match: domain.RouteMatchCriteria{
 			Sources: []domain.Source{domain.SourceWatcher},
@@ -56,7 +56,7 @@ func TestCreateRouteRejectsUnknownEnumValues(t *testing.T) {
 func TestCreateRouteAllowsWildcardSelectors(t *testing.T) {
 	svc := newTestService()
 
-	route, err := svc.CreateRoute(context.Background(), "Bearer admin-secret", domain.Route{
+	route, err := svc.CreateRoute(context.Background(), domain.Route{
 		ID:          "watcher-all-events",
 		Description: "Send all Watcher events to Slack",
 		Match: domain.RouteMatchCriteria{
@@ -76,7 +76,7 @@ func TestCreateRouteRejectsDestinationMissingFromDynamicRegistry(t *testing.T) {
 	svc := newTestService()
 	svc.destinations.Replace(nil)
 
-	_, err := svc.CreateRoute(context.Background(), "Bearer admin-secret", domain.Route{
+	_, err := svc.CreateRoute(context.Background(), domain.Route{
 		ID:           "watcher-all-events",
 		Destinations: []string{"slack-deployments"},
 	})
@@ -105,12 +105,10 @@ func TestBootstrapDynamicConfigSeedsAndReloadsRegistries(t *testing.T) {
 		},
 		RendererProfiles: map[string]config.ProfileConfig{
 			"detailed": {
-				"watcher": {
-					Default: config.DestinationTemplates{
-						Slack: &config.SlackTemplateConfig{
-							Title: "{{.Title}}",
-							Body:  "{{.Summary}}",
-						},
+				"watcher.deployment.failed": {
+					Slack: &config.SlackTemplateConfig{
+						Title: "{{.Title}}",
+						Body:  "{{.Summary}}",
 					},
 				},
 			},
@@ -129,6 +127,31 @@ func TestBootstrapDynamicConfigSeedsAndReloadsRegistries(t *testing.T) {
 	}
 	if _, ok := profiles.Get("detailed"); !ok {
 		t.Fatal("expected renderer profile registry to be seeded")
+	}
+}
+
+func TestCreateRouteReturnsRuntimeReloadRequiredWhenStoreWriteSucceedsButReloadFails(t *testing.T) {
+	store := &reloadFailingRouteStoreStub{listRoutesErr: errors.New("reload failed")}
+	svc := NewService(config.Config{
+		API: config.APIConfig{
+			ResolvedAdminToken: "admin-secret",
+		},
+	}, clock.Real{}, store, nil, routing.New(nil), runtimeconfig.NewIntegrationRegistry(nil), runtimeconfig.NewDestinationRegistry(map[string]config.DestinationConfig{
+		"slack-deployments": {
+			Type: domain.DestinationSlack,
+		},
+	}), runtimeconfig.NewRendererProfileRegistry(nil))
+
+	_, err := svc.CreateRoute(context.Background(), domain.Route{
+		ID:           "watcher-all-events",
+		Match:        domain.RouteMatchCriteria{Sources: []domain.Source{domain.SourceWatcher}},
+		Destinations: []string{"slack-deployments"},
+	})
+	if !errors.Is(err, ErrRuntimeReloadRequired) {
+		t.Fatalf("expected runtime reload required error, got %v", err)
+	}
+	if !store.createCalled {
+		t.Fatal("expected route create to persist before reload failure")
 	}
 }
 
@@ -201,6 +224,9 @@ func (routeStoreStub) GetDelivery(context.Context, string) (domain.Delivery, err
 func (routeStoreStub) ListEventsByReceipt(context.Context, string) ([]domain.Event, error) {
 	return nil, nil
 }
+func (routeStoreStub) ListDeliveriesByEventIDs(context.Context, []string) (map[string][]domain.Delivery, error) {
+	return map[string][]domain.Delivery{}, nil
+}
 func (routeStoreStub) ListDeliveries(context.Context, domain.DeliveryFilter) (domain.DeliveryPage, error) {
 	return domain.DeliveryPage{}, nil
 }
@@ -212,6 +238,21 @@ type seedStoreStub struct {
 	integrations []domain.ManagedIntegration
 	destinations []domain.ManagedDestination
 	profiles     []domain.ManagedRendererProfile
+}
+
+type reloadFailingRouteStoreStub struct {
+	routeStoreStub
+	createCalled  bool
+	listRoutesErr error
+}
+
+func (s *reloadFailingRouteStoreStub) CreateRoute(_ context.Context, route domain.Route) error {
+	s.createCalled = true
+	return nil
+}
+
+func (s *reloadFailingRouteStoreStub) ListRoutes(context.Context) ([]domain.Route, error) {
+	return nil, s.listRoutesErr
 }
 
 func (s *seedStoreStub) ListIntegrations(context.Context) ([]domain.ManagedIntegration, error) {
@@ -313,4 +354,11 @@ func (s *seedStoreStub) DeleteRendererProfile(_ context.Context, id string) erro
 		}
 	}
 	return nil
+}
+func (s *seedStoreStub) ListDeliveriesByEventIDs(_ context.Context, eventIDs []string) (map[string][]domain.Delivery, error) {
+	out := make(map[string][]domain.Delivery, len(eventIDs))
+	for _, eventID := range eventIDs {
+		out[eventID] = nil
+	}
+	return out, nil
 }

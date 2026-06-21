@@ -77,29 +77,32 @@ type Receipt struct {
 }
 
 type Event struct {
-	ID            string
-	ReceiptID     string
-	Source        Source
-	IntegrationID string
-	SourceEventID string
-	Type          string
-	Action        string
-	Lifecycle     Lifecycle
-	Severity      Severity
-	Title         string
-	Summary       string
-	Service       string
-	Environment   string
-	Release       string
-	CommitSHA     string
-	Actor         string
-	Fingerprint   string
-	GroupKey      string
-	URL           string
-	OccurredAt    time.Time
-	LabelsJSON    []byte
-	FieldsJSON    []byte
-	CreatedAt     time.Time
+	ID             string
+	ReceiptID      string
+	Source         Source
+	IntegrationID  string
+	SourceEventID  string
+	Type           string
+	Action         string
+	Lifecycle      Lifecycle
+	Severity       Severity
+	Title          string
+	Summary        string
+	Service        string
+	Environment    string
+	Release        string
+	CommitSHA      string
+	Actor          string
+	Fingerprint    string
+	GroupKey       string
+	URL            string
+	OccurredAt     time.Time
+	LabelsJSON     []byte
+	MetadataJSON   []byte
+	RouteTraceJSON []byte
+	PayloadVersion int
+	PayloadJSON    []byte
+	CreatedAt      time.Time
 }
 
 type Delivery struct {
@@ -160,6 +163,12 @@ type IngestBatch struct {
 	Receipt         Receipt
 	Events          []Event
 	DeliveryByEvent map[string][]Delivery
+}
+
+type RouteTrace struct {
+	RouteMatchCount int      `json:"route_match_count"`
+	RouteIDs        []string `json:"route_ids,omitempty"`
+	DestinationIDs  []string `json:"destination_ids,omitempty"`
 }
 
 type IngestResult struct {
@@ -251,12 +260,7 @@ type ManagedDestination struct {
 	UpdatedAt  time.Time
 }
 
-type RendererProfile map[string]RendererSourceConfig
-
-type RendererSourceConfig struct {
-	Default   RendererDestinationTemplates            `json:"default"`
-	Overrides map[string]RendererDestinationTemplates `json:"overrides,omitempty"`
-}
+type RendererProfile map[string]RendererDestinationTemplates
 
 type RendererDestinationTemplates struct {
 	Slack    *SlackTemplate    `json:"slack,omitempty"`
@@ -297,30 +301,6 @@ type AttemptResult struct {
 	ProviderMessageID string
 	NextStatus        DeliveryStatus
 	NextAttemptAt     *time.Time
-}
-
-var KnownEventTypes = []string{
-	// watcher events
-	"watcher.version.found",
-	"watcher.deployment.started",
-	"watcher.deployment.succeeded",
-	"watcher.deployment.failed",
-	"watcher.deployment.cancelled",
-	"watcher.deployment.rolled_back",
-	"watcher.rollback.succeeded",
-	"watcher.rollback.failed",
-	"watcher.webhook.test",
-	"webhook.delivery.exhausted",
-	"service.health.changed",
-
-	// github events
-	"github.pull_request.opened",
-	"github.pull_request.merged",
-	"github.pull_request.closed",
-	"github.workflow.succeeded",
-	"github.workflow.failed",
-	"github.workflow.cancelled",
-	"github.release.published",
 }
 
 var KnownSources = []Source{
@@ -380,23 +360,6 @@ func KnownReceiptStatusStrings() []string {
 
 func IsKnownSeverity(value Severity) bool {
 	for _, known := range KnownSeverities {
-		if known == value {
-			return true
-		}
-	}
-	return false
-}
-
-func KnownEventTypeStrings() []string {
-	values := make([]string, 0, len(KnownEventTypes))
-	for _, value := range KnownEventTypes {
-		values = append(values, value)
-	}
-	return values
-}
-
-func IsKnownEventType(value string) bool {
-	for _, known := range KnownEventTypes {
 		if known == value {
 			return true
 		}

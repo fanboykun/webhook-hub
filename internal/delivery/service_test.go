@@ -2,8 +2,9 @@ package delivery
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 )
 
 func TestProcessOnceSent(t *testing.T) {
-	slack := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	slack := newLoopbackTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer slack.Close()
@@ -74,7 +75,7 @@ func TestProcessOnceSent(t *testing.T) {
 		t.Fatalf("seed ingest: %v", err)
 	}
 
-	service := NewService(store, cfg, runtimeconfig.NewDestinationRegistry(cfg.Destinations), runtimeconfig.NewRendererProfileRegistry(cfg.RendererProfiles), clock.Real{}, observability.NewLogger(cfg.Logging))
+	service := NewService(store, cfg, runtimeconfig.NewDestinationRegistry(cfg.Destinations), runtimeconfig.NewRendererProfileRegistry(runtimeconfig.RendererProfilesFromConfig(cfg.RendererProfiles)), clock.Real{}, observability.NewLogger(cfg.Logging))
 	claimed, err := service.ProcessOnce(context.Background(), "worker-1")
 	if err != nil {
 		t.Fatalf("process once: %v", err)
@@ -85,7 +86,7 @@ func TestProcessOnceSent(t *testing.T) {
 }
 
 func TestProcessOnceTelegramSent(t *testing.T) {
-	telegramAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	telegramAPI := newLoopbackTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/bottest-token/sendMessage" {
 			t.Fatalf("unexpected telegram path: %s", r.URL.Path)
 		}
@@ -146,7 +147,7 @@ func TestProcessOnceTelegramSent(t *testing.T) {
 		t.Fatalf("seed ingest: %v", err)
 	}
 
-	service := NewService(store, cfg, runtimeconfig.NewDestinationRegistry(cfg.Destinations), runtimeconfig.NewRendererProfileRegistry(cfg.RendererProfiles), clock.Real{}, observability.NewLogger(cfg.Logging))
+	service := NewService(store, cfg, runtimeconfig.NewDestinationRegistry(cfg.Destinations), runtimeconfig.NewRendererProfileRegistry(runtimeconfig.RendererProfilesFromConfig(cfg.RendererProfiles)), clock.Real{}, observability.NewLogger(cfg.Logging))
 	claimed, err := service.ProcessOnce(context.Background(), "worker-1")
 	if err != nil {
 		t.Fatalf("process once: %v", err)
@@ -158,7 +159,7 @@ func TestProcessOnceTelegramSent(t *testing.T) {
 
 func TestProcessOnceUsesHotReloadedDestinationRegistry(t *testing.T) {
 	firstHits := make(chan struct{}, 1)
-	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	first := newLoopbackTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case firstHits <- struct{}{}:
 		default:
@@ -168,7 +169,7 @@ func TestProcessOnceUsesHotReloadedDestinationRegistry(t *testing.T) {
 	defer first.Close()
 
 	secondHits := make(chan struct{}, 1)
-	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	second := newLoopbackTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case secondHits <- struct{}{}:
 		default:
@@ -239,7 +240,7 @@ func TestProcessOnceUsesHotReloadedDestinationRegistry(t *testing.T) {
 		},
 	})
 
-	service := NewService(store, cfg, registry, runtimeconfig.NewRendererProfileRegistry(cfg.RendererProfiles), clock.Real{}, observability.NewLogger(cfg.Logging))
+	service := NewService(store, cfg, registry, runtimeconfig.NewRendererProfileRegistry(runtimeconfig.RendererProfilesFromConfig(cfg.RendererProfiles)), clock.Real{}, observability.NewLogger(cfg.Logging))
 	if _, err := service.ProcessOnce(context.Background(), "worker-1"); err != nil {
 		t.Fatalf("process once: %v", err)
 	}
@@ -286,6 +287,34 @@ func deliveryTestConfig(t *testing.T, slackURL string) config.Config {
 			},
 		},
 	}
+}
+
+type loopbackTestServer struct {
+	URL    string
+	server *http.Server
+}
+
+func newLoopbackTestServer(t *testing.T, handler http.Handler) *loopbackTestServer {
+	t.Helper()
+
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("loopback listener unavailable in this environment: %v", err)
+	}
+
+	server := &http.Server{Handler: handler}
+	go func() {
+		_ = server.Serve(listener)
+	}()
+
+	return &loopbackTestServer{
+		URL:    fmt.Sprintf("http://%s", listener.Addr().String()),
+		server: server,
+	}
+}
+
+func (s *loopbackTestServer) Close() {
+	_ = s.server.Shutdown(context.Background())
 }
 
 func deliveryTelegramTestConfig(t *testing.T, apiBaseURL string) config.Config {

@@ -3,7 +3,6 @@ package delivery
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -16,7 +15,7 @@ import (
 
 func TestRunnerProcessesPendingDelivery(t *testing.T) {
 	delivered := make(chan struct{}, 1)
-	slack := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	slack := newLoopbackTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case delivered <- struct{}{}:
 		default:
@@ -81,7 +80,7 @@ func TestRunnerProcessesPendingDelivery(t *testing.T) {
 		t.Fatalf("seed ingest: %v", err)
 	}
 
-	service := NewService(store, cfg, runtimeconfig.NewDestinationRegistry(cfg.Destinations), runtimeconfig.NewRendererProfileRegistry(cfg.RendererProfiles), clock.Real{}, observability.NewLogger(cfg.Logging))
+	service := NewService(store, cfg, runtimeconfig.NewDestinationRegistry(cfg.Destinations), runtimeconfig.NewRendererProfileRegistry(runtimeconfig.RendererProfilesFromConfig(cfg.RendererProfiles)), clock.Real{}, observability.NewLogger(cfg.Logging))
 	runner := NewRunner(service)
 
 	ctx, cancel := context.WithCancel(context.Background())

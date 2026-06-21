@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fanboykun/webhook-hub/internal/config"
 	"github.com/fanboykun/webhook-hub/internal/domain"
 	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
 )
@@ -54,22 +53,18 @@ func TestEscapeTelegram(t *testing.T) {
 }
 
 func TestConfigurableRenderer_Resolution(t *testing.T) {
-	profiles := map[string]config.ProfileConfig{
+	profiles := map[string]domain.RendererProfile{
 		"my-profile": {
-			"watcher": config.SourceConfig{
-				Default: config.DestinationTemplates{
-					Slack: &config.SlackTemplateConfig{
-						Title: "Default Title",
-						Body:  "Default Body",
-					},
+			"watcher.deployment.failed": {
+				Slack: &domain.SlackTemplate{
+					Title: "Failed Override Title",
+					Body:  "Failed Override Body",
 				},
-				Overrides: map[string]config.DestinationTemplates{
-					"watcher.deployment.failed": {
-						Slack: &config.SlackTemplateConfig{
-							Title: "Failed Override Title",
-							Body:  "Failed Override Body",
-						},
-					},
+			},
+			"watcher.deployment.started": {
+				Slack: &domain.SlackTemplate{
+					Title: "Default Title",
+					Body:  "Default Body",
 				},
 			},
 		},
@@ -99,10 +94,10 @@ func TestConfigurableRenderer_Resolution(t *testing.T) {
 		t.Errorf("expected fallback slack renderer, got: %s", string(msg.Body))
 	}
 
-	// 3. Source doesn't exist in profile -> fall back
+	// 3. Event doesn't exist in profile -> fall back
 	destGoodProfile := domain.Destination{ID: "d3", Type: domain.DestinationSlack, Profile: "my-profile"}
-	evtBadSource := domain.Event{Source: domain.SourceGitHub, Type: "github.pull_request.opened"}
-	msg, err = r.Render(ctx, evtBadSource, destGoodProfile)
+	evtNoBinding := domain.Event{Source: domain.SourceGitHub, Type: "github.pull_request.opened"}
+	msg, err = r.Render(ctx, evtNoBinding, destGoodProfile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -132,28 +127,24 @@ func TestConfigurableRenderer_Resolution(t *testing.T) {
 }
 
 func TestGoldenIntegration(t *testing.T) {
-	profiles := map[string]config.ProfileConfig{
+	profiles := map[string]domain.RendererProfile{
 		"templated-profile": {
-			"watcher": config.SourceConfig{
-				Default: config.DestinationTemplates{
-					Slack: &config.SlackTemplateConfig{
-						Title: "[{{.Severity}}] {{.Title}}",
-						Body:  "Service {{.Service}} environment {{.Environment}}",
-					},
-					Telegram: &config.TelegramTemplateConfig{
-						Text: "<b>[{{.Severity}}] {{.Title}}</b>\nService: {{.Service}}",
-					},
+			"watcher.deployment.started": {
+				Slack: &domain.SlackTemplate{
+					Title: "[{{.Severity}}] {{.Title}}",
+					Body:  "Service {{.Service}} environment {{.Environment}}",
 				},
-				Overrides: map[string]config.DestinationTemplates{
-					"watcher.deployment.failed": {
-						Slack: &config.SlackTemplateConfig{
-							Title: "CRITICAL ALERT: {{.Title}} failed in {{.Environment}}",
-							Body:  "*Service:* {{.Service}}\n*Release:* {{.Release}}\n*Error/Summary:* {{.Summary}}",
-						},
-						Telegram: &config.TelegramTemplateConfig{
-							Text: "🚨 <b>{{.Title}} ({{.Lifecycle}})</b> 🚨\nEnvironment: <b>{{.Environment}}</b>\nService: <code>{{.Service}}</code>\nRelease: <code>{{.Release}}</code>\nSummary: <i>{{.Summary}}</i>\n<a href=\"{{.URL}}\">View Details</a>",
-						},
-					},
+				Telegram: &domain.TelegramTemplate{
+					Text: "<b>[{{.Severity}}] {{.Title}}</b>\nService: {{.Service}}",
+				},
+			},
+			"watcher.deployment.failed": {
+				Slack: &domain.SlackTemplate{
+					Title: "CRITICAL ALERT: {{.Title}} failed in {{.Environment}}",
+					Body:  "*Service:* {{.Service}}\n*Release:* {{.Release}}\n*Error/Summary:* {{.Summary}}",
+				},
+				Telegram: &domain.TelegramTemplate{
+					Text: "🚨 <b>{{.Title}} ({{.Lifecycle}})</b> 🚨\nEnvironment: <b>{{.Environment}}</b>\nService: <code>{{.Service}}</code>\nRelease: <code>{{.Release}}</code>\nSummary: <i>{{.Summary}}</i>\n<a href=\"{{.URL}}\">View Details</a>",
 				},
 			},
 		},

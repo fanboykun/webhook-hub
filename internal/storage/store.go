@@ -2,10 +2,13 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/fanboykun/webhook-hub/internal/domain"
 )
+
+var ErrDeliveryLeaseLost = errors.New("delivery lease lost")
 
 type Store interface {
 	Ingest(ctx context.Context, batch domain.IngestBatch) (domain.IngestResult, error)
@@ -33,6 +36,7 @@ type Store interface {
 	ListReceipts(ctx context.Context, filter domain.ReceiptFilter) (domain.ReceiptPage, error)
 	GetEvent(ctx context.Context, id string) (domain.Event, error)
 	ListEventsByReceipt(ctx context.Context, receiptID string) ([]domain.Event, error)
+	ListDeliveriesByEventIDs(ctx context.Context, eventIDs []string) (map[string][]domain.Delivery, error)
 	ListDeliveries(ctx context.Context, filter domain.DeliveryFilter) (domain.DeliveryPage, error)
 	GetDelivery(ctx context.Context, id string) (domain.Delivery, error)
 	ClaimDueDeliveries(ctx context.Context, claim domain.ClaimRequest) ([]domain.DeliveryEnvelope, error)

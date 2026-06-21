@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -126,6 +127,10 @@ func (s *Service) processEnvelope(ctx context.Context, workerID string, envelope
 			NextStatus:        domain.DeliverySent,
 		})
 		if err != nil {
+			if errors.Is(err, storage.ErrDeliveryLeaseLost) {
+				s.logWarn("delivery.lease_lost", "worker_id", workerID, "delivery_id", envelope.Delivery.ID, "event_id", envelope.Event.ID, "destination_id", envelope.Delivery.DestinationID)
+				return nil
+			}
 			s.logError("delivery.sent_update_failed", "worker_id", workerID, "delivery_id", envelope.Delivery.ID, "event_id", envelope.Event.ID, "destination_id", envelope.Delivery.DestinationID, "error", err)
 			return err
 		}
@@ -173,6 +178,10 @@ func (s *Service) processEnvelope(ctx context.Context, workerID string, envelope
 		NextAttemptAt: nextAttempt,
 	})
 	if err != nil {
+		if errors.Is(err, storage.ErrDeliveryLeaseLost) {
+			s.logWarn("delivery.lease_lost", "worker_id", workerID, "delivery_id", envelope.Delivery.ID, "event_id", envelope.Event.ID, "destination_id", envelope.Delivery.DestinationID)
+			return nil
+		}
 		s.logError("delivery.failure_update_failed", "worker_id", workerID, "delivery_id", envelope.Delivery.ID, "event_id", envelope.Event.ID, "destination_id", envelope.Delivery.DestinationID, "error", err)
 		return err
 	}

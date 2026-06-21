@@ -108,7 +108,7 @@ Docs and health:
 - SQLite is the durable inbox/outbox for version 1, which means one active application instance owns the database.
 - Huma webhook operations are retained because raw-body verification and OpenAPI generation can coexist.
 - Routing is additive; duplicate destination matches collapse into a single delivery row per event and destination.
-- Built-in renderers remain the fallback baseline, with optional profile-driven templates layered on top and managed live through the admin API.
+- Built-in renderers remain the fallback baseline, with optional event-scoped profile bindings layered on top and managed live through the admin API.
 
 ## Repository Direction
 

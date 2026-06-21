@@ -95,7 +95,7 @@ Watcher, GitHub, Grafana, and Sentry payloads are parsed only inside their corre
 
 ### 5.2 Normalized events carry operational meaning
 
-The normalized event model preserves source identifiers and raw metadata while exposing common concepts such as severity, lifecycle, service, environment, release, and fingerprint.
+The normalized event model preserves source identifiers and raw metadata while exposing common concepts such as severity, lifecycle, service, environment, release, and fingerprint. Each known event type is governed by an event-definition registry that declares its source ownership and the normalized payload contract persisted with the event.
 
 ### 5.3 Routing is separate from rendering
 
@@ -775,8 +775,6 @@ type Event struct {
     Summary         string
     Service         string
     Environment     string
-    Repository      string
-    Branch          string
     Release         string
     CommitSHA       string
     Actor           string
@@ -786,11 +784,12 @@ type Event struct {
     URL             string
 
     OccurredAt      time.Time
-    StartedAt       *time.Time
-    EndedAt         *time.Time
 
-    Labels          map[string]string
-    Fields          map[string]any
+    LabelsJSON      []byte
+    MetadataJSON    []byte
+    RouteTraceJSON  []byte
+    PayloadVersion  int
+    PayloadJSON     []byte
 }
 ```
 
@@ -817,7 +816,7 @@ error
 critical
 ```
 
-Source-provided severities must be mapped explicitly. Unknown values map to a configured default, usually `warning`, while preserving the original value in `fields`.
+Source-provided severities must be mapped explicitly. Source-specific extra context belongs in `metadata_json` or the typed `payload_json`, not in ad hoc route metadata.
 
 ### Event type naming
 
@@ -1025,7 +1024,7 @@ type Renderer interface {
 }
 ```
 
-Version 1 keeps the built-in code-defined renderers as the durability baseline, and may layer optional profile-driven templates on top. Renderer profiles are dynamically managed through the operational API, persisted in SQLite, seeded once from file config when the table is empty, and hot-reloaded into the live delivery renderer registry. Template configuration is validated when present, but destinations must still fall back to the built-in renderer if no matching profile, source, or event-type template exists so delivery does not fail solely because renderer configuration has not been created yet.
+Version 1 keeps the built-in code-defined renderers as the durability baseline, and may layer optional profile-driven templates on top. Renderer profiles are dynamically managed through the operational API, persisted in SQLite, seeded once from file config when the table is empty, and hot-reloaded into the live delivery renderer registry. Profiles now bind templates directly to normalized event types instead of using source-level defaults with ad hoc overrides, because each event type owns a distinct payload contract. Template configuration is validated when present, but destinations must still fall back to the built-in renderer if no matching profile binding exists so delivery does not fail solely because renderer configuration has not been created yet.
 
 ### Slack
 
@@ -1147,8 +1146,6 @@ Never store authorization headers, signatures, bot tokens, webhook URLs, or cook
 | `summary` | Render-safe summary |
 | `service` | Service identity |
 | `environment` | Runtime environment |
-| `repository` | Repository identity |
-| `branch` | Branch |
 | `release` | Release/version |
 | `commit_sha` | Commit |
 | `actor` | Initiating actor |
@@ -1156,10 +1153,11 @@ Never store authorization headers, signatures, bot tokens, webhook URLs, or cook
 | `group_key` | Source grouping |
 | `url` | Source details URL |
 | `occurred_at` | Source occurrence time |
-| `started_at` | Optional |
-| `ended_at` | Optional |
 | `labels_json` | Normalized labels |
-| `fields_json` | Additional normalized fields |
+| `fields_json` | Normalized metadata retained for compatibility with the current table name; runtime code treats this as `metadata_json` |
+| `route_trace_json` | Persisted routing outcome summary (`route_match_count`, route IDs, destination IDs) |
+| `payload_version` | Version of the typed event payload contract |
+| `payload_json` | Versioned source-specific typed payload used by renderers and operators |
 | `created_at` | Persistence time |
 
 Indexes:

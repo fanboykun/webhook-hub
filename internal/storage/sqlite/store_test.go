@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	configcrypto "github.com/fanboykun/webhook-hub/internal/config/crypto"
 	"github.com/fanboykun/webhook-hub/internal/domain"
 	"github.com/fanboykun/webhook-hub/internal/observability"
+	"github.com/fanboykun/webhook-hub/internal/storage"
 )
 
 func TestIngestDuplicateReceipt(t *testing.T) {
@@ -139,12 +141,10 @@ func TestRendererProfileCRUD(t *testing.T) {
 	profile := domain.ManagedRendererProfile{
 		ID: "detailed",
 		Profile: domain.RendererProfile{
-			"watcher": {
-				Default: domain.RendererDestinationTemplates{
-					Slack: &domain.SlackTemplate{
-						Title: "{{.Title}}",
-						Body:  "{{.Summary}}",
-					},
+			"watcher.deployment.failed": {
+				Slack: &domain.SlackTemplate{
+					Title: "{{.Title}}",
+					Body:  "{{.Summary}}",
 				},
 			},
 		},
@@ -168,14 +168,12 @@ func TestRendererProfileCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get renderer profile failed: %v", err)
 	}
-	if got.Profile["watcher"].Default.Slack == nil {
+	if got.Profile["watcher.deployment.failed"].Slack == nil {
 		t.Fatalf("expected slack template in stored profile, got %+v", got.Profile)
 	}
 
-	profile.Profile["watcher"] = domain.RendererSourceConfig{
-		Default: domain.RendererDestinationTemplates{
-			Telegram: &domain.TelegramTemplate{Text: "<b>{{.Title}}</b>"},
-		},
+	profile.Profile["watcher.deployment.failed"] = domain.RendererDestinationTemplates{
+		Telegram: &domain.TelegramTemplate{Text: "<b>{{.Title}}</b>"},
 	}
 	profile.UpdatedAt = now.Add(time.Minute)
 	if err := store.UpdateRendererProfile(context.Background(), profile); err != nil {
@@ -186,7 +184,7 @@ func TestRendererProfileCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get updated renderer profile failed: %v", err)
 	}
-	if updated.Profile["watcher"].Default.Telegram == nil {
+	if updated.Profile["watcher.deployment.failed"].Telegram == nil {
 		t.Fatalf("expected telegram template after update, got %+v", updated.Profile)
 	}
 
@@ -339,6 +337,157 @@ func TestIngestBatchValidation(t *testing.T) {
 	}
 }
 
+func TestIngestBatchValidationRejectsDuplicateEventIDs(t *testing.T) {
+	store := openTestStore(t)
+	now := time.Now().UTC()
+
+	_, err := store.Ingest(context.Background(), domain.IngestBatch{
+		Receipt: domain.Receipt{
+			ID:               "r1",
+			Source:           domain.SourceWatcher,
+			IntegrationID:    "watcher-production",
+			SourceDeliveryID: "event-1",
+			SourceEventType:  "deployment.failed",
+			PayloadSHA256:    "abc",
+			ReceivedAt:       now,
+			Status:           domain.ReceiptAccepted,
+			CreatedAt:        now,
+		},
+		Events: []domain.Event{
+			{ID: "e1", ReceiptID: "r1", Source: domain.SourceWatcher, Type: "watcher.deployment.failed", OccurredAt: now, CreatedAt: now},
+			{ID: "e1", ReceiptID: "r1", Source: domain.SourceWatcher, Type: "watcher.deployment.failed", OccurredAt: now, CreatedAt: now},
+		},
+	})
+	if err == nil || err.Error() != `duplicate event id "e1" in ingest batch` {
+		t.Fatalf("expected duplicate event id error, got %v", err)
+	}
+}
+
+func TestIngestBatchValidationRejectsDuplicateDeliveryTargets(t *testing.T) {
+	store := openTestStore(t)
+	now := time.Now().UTC()
+
+	_, err := store.Ingest(context.Background(), domain.IngestBatch{
+		Receipt: domain.Receipt{
+			ID:               "r1",
+			Source:           domain.SourceWatcher,
+			IntegrationID:    "watcher-production",
+			SourceDeliveryID: "event-1",
+			SourceEventType:  "deployment.failed",
+			PayloadSHA256:    "abc",
+			ReceivedAt:       now,
+			Status:           domain.ReceiptAccepted,
+			CreatedAt:        now,
+		},
+		Events: []domain.Event{
+			{ID: "e1", ReceiptID: "r1", Source: domain.SourceWatcher, Type: "watcher.deployment.failed", OccurredAt: now, CreatedAt: now},
+		},
+		DeliveryByEvent: map[string][]domain.Delivery{
+			"e1": {
+				{ID: "d1", EventID: "e1", DestinationID: "slack-deployments", DestinationType: domain.DestinationSlack, Status: domain.DeliveryPending, MaxAttempts: 3, NextAttemptAt: now, CreatedAt: now, UpdatedAt: now},
+				{ID: "d2", EventID: "e1", DestinationID: "slack-deployments", DestinationType: domain.DestinationSlack, Status: domain.DeliveryPending, MaxAttempts: 3, NextAttemptAt: now, CreatedAt: now, UpdatedAt: now},
+			},
+		},
+	})
+	if err == nil || err.Error() != `duplicate delivery target "slack-deployments" for event "e1"` {
+		t.Fatalf("expected duplicate delivery target error, got %v", err)
+	}
+}
+
+func TestClaimDueDeliveriesSkipsRowsThatLoseEligibility(t *testing.T) {
+	store := openTestStore(t)
+	now := time.Now().UTC()
+	if err := seedDeliveryForClaimTests(store, now, domain.DeliveryPending); err != nil {
+		t.Fatalf("seed delivery: %v", err)
+	}
+
+	var model deliveryModel
+	if err := store.db.WithContext(context.Background()).First(&model, "id = ?", "d1").Error; err != nil {
+		t.Fatalf("load seeded delivery: %v", err)
+	}
+	if err := store.db.WithContext(context.Background()).Model(&deliveryModel{}).
+		Where("id = ?", model.ID).
+		Updates(map[string]any{
+			"status":       string(domain.DeliveryProcessing),
+			"locked_by":    "other-worker",
+			"locked_until": now.Add(time.Minute),
+			"updated_at":   now,
+		}).Error; err != nil {
+		t.Fatalf("update delivery before claim: %v", err)
+	}
+
+	claimed, err := store.ClaimDueDeliveries(context.Background(), domain.ClaimRequest{
+		WorkerID:      "worker-1",
+		BatchSize:     10,
+		LeaseDuration: time.Minute,
+		Now:           now,
+	})
+	if err != nil {
+		t.Fatalf("claim deliveries: %v", err)
+	}
+	if len(claimed) != 0 {
+		t.Fatalf("expected no claimed deliveries, got %+v", claimed)
+	}
+}
+
+func TestCompleteAttemptReturnsLeaseLostWhenWorkerNoLongerOwnsDelivery(t *testing.T) {
+	store := openTestStore(t)
+	now := time.Now().UTC()
+	if err := seedDeliveryForClaimTests(store, now, domain.DeliveryProcessing); err != nil {
+		t.Fatalf("seed delivery: %v", err)
+	}
+
+	if err := store.db.WithContext(context.Background()).Model(&deliveryModel{}).
+		Where("id = ?", "d1").
+		Updates(map[string]any{
+			"locked_by":    "other-worker",
+			"locked_until": now.Add(time.Minute),
+			"updated_at":   now,
+		}).Error; err != nil {
+		t.Fatalf("reassign lease: %v", err)
+	}
+
+	err := store.CompleteAttempt(context.Background(), domain.AttemptResult{
+		DeliveryID:   "d1",
+		WorkerID:     "worker-1",
+		StartedAt:    now,
+		CompletedAt:  now.Add(time.Second),
+		Outcome:      "sent",
+		NextStatus:   domain.DeliverySent,
+		ResponseCode: 200,
+	})
+	if !errors.Is(err, storage.ErrDeliveryLeaseLost) {
+		t.Fatalf("expected lease lost error, got %v", err)
+	}
+
+	delivery, getErr := store.GetDelivery(context.Background(), "d1")
+	if getErr != nil {
+		t.Fatalf("get delivery: %v", getErr)
+	}
+	if delivery.Status != domain.DeliveryProcessing {
+		t.Fatalf("expected delivery to remain processing, got %s", delivery.Status)
+	}
+	if delivery.LockedBy != "other-worker" {
+		t.Fatalf("expected lease owner to remain other-worker, got %q", delivery.LockedBy)
+	}
+}
+
+func TestListDeliveriesByEventIDsReturnsAllDeliveries(t *testing.T) {
+	store := openTestStore(t)
+	now := time.Now().UTC()
+	if err := seedReceiptWithManyDeliveries(store, now, 105); err != nil {
+		t.Fatalf("seed receipt: %v", err)
+	}
+
+	deliveriesByEvent, err := store.ListDeliveriesByEventIDs(context.Background(), []string{"e-many"})
+	if err != nil {
+		t.Fatalf("list deliveries by event ids: %v", err)
+	}
+	if got := len(deliveriesByEvent["e-many"]); got != 105 {
+		t.Fatalf("expected 105 deliveries, got %d", got)
+	}
+}
+
 func TestDynamicConfigCRUD(t *testing.T) {
 	store := openEncryptedTestStore(t)
 	now := time.Now().UTC()
@@ -438,4 +587,107 @@ func openEncryptedTestStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	return store
+}
+
+func seedDeliveryForClaimTests(store *Store, now time.Time, status domain.DeliveryStatus) error {
+	_, err := store.Ingest(context.Background(), domain.IngestBatch{
+		Receipt: domain.Receipt{
+			ID:               "r1",
+			Source:           domain.SourceWatcher,
+			IntegrationID:    "watcher-production",
+			SourceDeliveryID: "event-1",
+			SourceEventType:  "deployment.failed",
+			PayloadSHA256:    "abc",
+			ReceivedAt:       now,
+			Status:           domain.ReceiptAccepted,
+			CreatedAt:        now,
+		},
+		Events: []domain.Event{
+			{
+				ID:            "e1",
+				ReceiptID:     "r1",
+				Source:        domain.SourceWatcher,
+				IntegrationID: "watcher-production",
+				Type:          "watcher.deployment.failed",
+				Action:        "deployment.failed",
+				Lifecycle:     domain.LifecycleFailed,
+				Severity:      domain.SeverityError,
+				Title:         "deployment failed",
+				Summary:       "health check failed",
+				Service:       "auth-service",
+				Environment:   "production",
+				OccurredAt:    now,
+				CreatedAt:     now,
+			},
+		},
+		DeliveryByEvent: map[string][]domain.Delivery{
+			"e1": {
+				{
+					ID:              "d1",
+					EventID:         "e1",
+					DestinationID:   "slack-deployments",
+					DestinationType: domain.DestinationSlack,
+					Status:          status,
+					MaxAttempts:     3,
+					NextAttemptAt:   now,
+					CreatedAt:       now,
+					UpdatedAt:       now,
+				},
+			},
+		},
+	})
+	return err
+}
+
+func seedReceiptWithManyDeliveries(store *Store, now time.Time, count int) error {
+	deliveries := make([]domain.Delivery, 0, count)
+	for i := 0; i < count; i++ {
+		deliveries = append(deliveries, domain.Delivery{
+			ID:              "d" + hex.EncodeToString([]byte{byte(i / 16), byte(i % 16)}),
+			EventID:         "e-many",
+			DestinationID:   "dest-" + hex.EncodeToString([]byte{byte(i / 16), byte(i % 16)}),
+			DestinationType: domain.DestinationSlack,
+			Status:          domain.DeliveryPending,
+			MaxAttempts:     3,
+			NextAttemptAt:   now,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		})
+	}
+
+	_, err := store.Ingest(context.Background(), domain.IngestBatch{
+		Receipt: domain.Receipt{
+			ID:               "r-many",
+			Source:           domain.SourceWatcher,
+			IntegrationID:    "watcher-production",
+			SourceDeliveryID: "event-many",
+			SourceEventType:  "deployment.failed",
+			PayloadSHA256:    "abc",
+			ReceivedAt:       now,
+			Status:           domain.ReceiptAccepted,
+			CreatedAt:        now,
+		},
+		Events: []domain.Event{
+			{
+				ID:            "e-many",
+				ReceiptID:     "r-many",
+				Source:        domain.SourceWatcher,
+				IntegrationID: "watcher-production",
+				Type:          "watcher.deployment.failed",
+				Action:        "deployment.failed",
+				Lifecycle:     domain.LifecycleFailed,
+				Severity:      domain.SeverityError,
+				Title:         "deployment failed",
+				Summary:       "health check failed",
+				Service:       "auth-service",
+				Environment:   "production",
+				OccurredAt:    now,
+				CreatedAt:     now,
+			},
+		},
+		DeliveryByEvent: map[string][]domain.Delivery{
+			"e-many": deliveries,
+		},
+	})
+	return err
 }

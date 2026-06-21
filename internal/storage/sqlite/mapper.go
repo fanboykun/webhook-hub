@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/fanboykun/webhook-hub/internal/domain"
 )
@@ -24,30 +25,37 @@ func toReceiptModel(in domain.Receipt) receiptModel {
 }
 
 func toEventModel(in domain.Event) eventModel {
+	payloadVersion := in.PayloadVersion
+	if payloadVersion <= 0 {
+		payloadVersion = 1
+	}
 	return eventModel{
-		ID:            in.ID,
-		ReceiptID:     in.ReceiptID,
-		Source:        string(in.Source),
-		IntegrationID: in.IntegrationID,
-		SourceEventID: in.SourceEventID,
-		Type:          in.Type,
-		Action:        in.Action,
-		Lifecycle:     string(in.Lifecycle),
-		Severity:      string(in.Severity),
-		Title:         in.Title,
-		Summary:       in.Summary,
-		Service:       in.Service,
-		Environment:   in.Environment,
-		Release:       in.Release,
-		CommitSHA:     in.CommitSHA,
-		Actor:         in.Actor,
-		Fingerprint:   in.Fingerprint,
-		GroupKey:      in.GroupKey,
-		URL:           in.URL,
-		OccurredAt:    in.OccurredAt,
-		LabelsJSON:    in.LabelsJSON,
-		FieldsJSON:    in.FieldsJSON,
-		CreatedAt:     in.CreatedAt,
+		ID:             in.ID,
+		ReceiptID:      in.ReceiptID,
+		Source:         string(in.Source),
+		IntegrationID:  in.IntegrationID,
+		SourceEventID:  in.SourceEventID,
+		Type:           in.Type,
+		Action:         in.Action,
+		Lifecycle:      string(in.Lifecycle),
+		Severity:       string(in.Severity),
+		Title:          in.Title,
+		Summary:        in.Summary,
+		Service:        in.Service,
+		Environment:    in.Environment,
+		Release:        in.Release,
+		CommitSHA:      in.CommitSHA,
+		Actor:          in.Actor,
+		Fingerprint:    in.Fingerprint,
+		GroupKey:       in.GroupKey,
+		URL:            in.URL,
+		OccurredAt:     in.OccurredAt,
+		LabelsJSON:     in.LabelsJSON,
+		MetadataJSON:   in.MetadataJSON,
+		RouteTraceJSON: in.RouteTraceJSON,
+		PayloadVersion: payloadVersion,
+		PayloadJSON:    in.PayloadJSON,
+		CreatedAt:      in.CreatedAt,
 	}
 }
 
@@ -70,29 +78,32 @@ func toDeliveryModel(in domain.Delivery) deliveryModel {
 
 func toDomainEvent(in eventModel) domain.Event {
 	return domain.Event{
-		ID:            in.ID,
-		ReceiptID:     in.ReceiptID,
-		Source:        domain.Source(in.Source),
-		IntegrationID: in.IntegrationID,
-		SourceEventID: in.SourceEventID,
-		Type:          in.Type,
-		Action:        in.Action,
-		Lifecycle:     domain.Lifecycle(in.Lifecycle),
-		Severity:      domain.Severity(in.Severity),
-		Title:         in.Title,
-		Summary:       in.Summary,
-		Service:       in.Service,
-		Environment:   in.Environment,
-		Release:       in.Release,
-		CommitSHA:     in.CommitSHA,
-		Actor:         in.Actor,
-		Fingerprint:   in.Fingerprint,
-		GroupKey:      in.GroupKey,
-		URL:           in.URL,
-		OccurredAt:    in.OccurredAt,
-		LabelsJSON:    in.LabelsJSON,
-		FieldsJSON:    in.FieldsJSON,
-		CreatedAt:     in.CreatedAt,
+		ID:             in.ID,
+		ReceiptID:      in.ReceiptID,
+		Source:         domain.Source(in.Source),
+		IntegrationID:  in.IntegrationID,
+		SourceEventID:  in.SourceEventID,
+		Type:           in.Type,
+		Action:         in.Action,
+		Lifecycle:      domain.Lifecycle(in.Lifecycle),
+		Severity:       domain.Severity(in.Severity),
+		Title:          in.Title,
+		Summary:        in.Summary,
+		Service:        in.Service,
+		Environment:    in.Environment,
+		Release:        in.Release,
+		CommitSHA:      in.CommitSHA,
+		Actor:          in.Actor,
+		Fingerprint:    in.Fingerprint,
+		GroupKey:       in.GroupKey,
+		URL:            in.URL,
+		OccurredAt:     in.OccurredAt,
+		LabelsJSON:     in.LabelsJSON,
+		MetadataJSON:   in.MetadataJSON,
+		RouteTraceJSON: in.RouteTraceJSON,
+		PayloadVersion: in.PayloadVersion,
+		PayloadJSON:    in.PayloadJSON,
+		CreatedAt:      in.CreatedAt,
 	}
 }
 
@@ -134,23 +145,33 @@ func toDomainDelivery(in deliveryModel) domain.Delivery {
 	}
 }
 
-func toRouteModel(in domain.Route) routeModel {
-	matchJSON, _ := json.Marshal(in.Match)
-	destinationsJSON, _ := json.Marshal(in.Destinations)
+func toRouteModel(in domain.Route) (routeModel, error) {
+	matchJSON, err := json.Marshal(in.Match)
+	if err != nil {
+		return routeModel{}, fmt.Errorf("marshal route match: %w", err)
+	}
+	destinationsJSON, err := json.Marshal(in.Destinations)
+	if err != nil {
+		return routeModel{}, fmt.Errorf("marshal route destinations: %w", err)
+	}
 	return routeModel{
 		ID:               in.ID,
 		Description:      in.Description,
 		MatchJSON:        matchJSON,
 		DestinationsJSON: destinationsJSON,
-	}
+	}, nil
 }
 
-func toDomainRoute(in routeModel) domain.Route {
+func toDomainRoute(in routeModel) (domain.Route, error) {
 	var match domain.RouteMatchCriteria
-	_ = json.Unmarshal(in.MatchJSON, &match)
+	if err := json.Unmarshal(in.MatchJSON, &match); err != nil {
+		return domain.Route{}, fmt.Errorf("unmarshal route match: %w", err)
+	}
 
 	var destinations []string
-	_ = json.Unmarshal(in.DestinationsJSON, &destinations)
+	if err := json.Unmarshal(in.DestinationsJSON, &destinations); err != nil {
+		return domain.Route{}, fmt.Errorf("unmarshal route destinations: %w", err)
+	}
 
 	return domain.Route{
 		ID:           in.ID,
@@ -159,5 +180,5 @@ func toDomainRoute(in routeModel) domain.Route {
 		Destinations: destinations,
 		CreatedAt:    in.CreatedAt,
 		UpdatedAt:    in.UpdatedAt,
-	}
+	}, nil
 }

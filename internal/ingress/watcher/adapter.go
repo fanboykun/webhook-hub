@@ -7,7 +7,6 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/fanboykun/webhook-hub/internal/config"
 	"github.com/fanboykun/webhook-hub/internal/domain"
+	watchercatalog "github.com/fanboykun/webhook-hub/internal/eventcatalog/watcher"
 	"github.com/fanboykun/webhook-hub/internal/ingress"
 )
 
@@ -201,47 +201,44 @@ func (a *Adapter) Normalize(_ context.Context, integrationID string, _ config.In
 	sourceEventID := firstNonEmpty(p.EventID, p.LegacyID, req.Headers.Get(headerEventID))
 	sourceDeliveryID := firstNonEmpty(req.Headers.Get(headerWebhookID), req.Headers.Get(headerDeliveryID), sourceEventID, sourceEventID+":"+eventType)
 
-	fields := map[string]any{
-		"schema_version":  p.SchemaVersion,
-		"event_type":      eventType,
-		"watcher_id":      p.Watcher.ID,
-		"watcher_name":    p.Watcher.Name,
-		"summary":         p.Summary,
-		"triggered_by":    p.TriggeredBy,
-		"version":         p.Version,
-		"attempt":         p.Attempt,
-		"service":         p.Service,
-		"health":          p.Health,
-		"failed_delivery": p.FailedDelivery,
+	input := watchercatalog.ProjectionInput{
+		IntegrationID:     integrationID,
+		NormalizedType:    watchercatalog.Key(eventType),
+		OccurredAt:        occurredAt,
+		SourceEventID:     sourceEventID,
+		SourceDeliveryID:  sourceDeliveryID,
+		Summary:           p.Summary,
+		ServiceName:       serviceName,
+		Environment:       p.LegacyEnvironment,
+		Release:           release,
+		CommitSHA:         p.LegacyCommitSHA,
+		Actor:             actor,
+		URL:               firstNonEmpty(url, p.Service.HealthCheckURL),
+		Labels:            p.LegacyLabels,
+		SchemaVersion:     p.SchemaVersion,
+		TriggeredBy:       p.TriggeredBy,
+		Watcher:           watchercatalog.WatcherRef{ID: p.Watcher.ID, Name: p.Watcher.Name},
+		LegacyErrorStage:  p.LegacyError.Stage,
+		LegacyErrorReason: p.LegacyError.Message,
 	}
-	if p.LegacyError.Message != "" || p.LegacyError.Stage != "" {
-		fields["legacy_error_message"] = p.LegacyError.Message
-		fields["legacy_error_stage"] = p.LegacyError.Stage
+	if service := watcherServiceDetails(p); service != nil {
+		input.Service = service
 	}
-
-	labelsJSON, _ := json.Marshal(p.LegacyLabels)
-	fieldsJSON, _ := json.Marshal(fields)
-
-	event := domain.Event{
-		Source:        domain.SourceWatcher,
-		IntegrationID: integrationID,
-		SourceEventID: sourceEventID,
-		Type:          eventType,
-		Action:        watcherAction(eventType),
-		Lifecycle:     watcherLifecycle(eventType),
-		Severity:      watcherSeverity(eventType, p),
-		Title:         firstNonEmpty(p.Summary, fallbackWatcherTitle(eventType, p)),
-		Summary:       firstNonEmpty(p.Summary, fallbackWatcherSummary(eventType, serviceName, p)),
-		Service:       serviceName,
-		Environment:   p.LegacyEnvironment,
-		Release:       release,
-		CommitSHA:     p.LegacyCommitSHA,
-		Actor:         actor,
-		Fingerprint:   watcherFingerprint(sourceEventID, eventType, p),
-		URL:           firstNonEmpty(url, p.Service.HealthCheckURL),
-		OccurredAt:    occurredAt,
-		LabelsJSON:    labelsJSON,
-		FieldsJSON:    fieldsJSON,
+	if version := watcherVersionDetails(p); version != nil {
+		input.Version = version
+	}
+	if attempt := watcherAttemptDetails(p); attempt != nil {
+		input.Attempt = attempt
+	}
+	if health := watcherHealthDetails(p); health != nil {
+		input.Health = health
+	}
+	if failedDelivery := watcherFailedDeliveryDetails(p); failedDelivery != nil {
+		input.FailedDelivery = failedDelivery
+	}
+	event, err := watchercatalog.Project(input)
+	if err != nil {
+		return ingress.AdapterResult{}, err
 	}
 
 	return ingress.AdapterResult{
@@ -268,6 +265,79 @@ func fromLegacyPayload(in legacyPayload) Payload {
 	out.LegacyError.Message = in.Error.Message
 	out.LegacyError.Stage = in.Error.Stage
 	return out
+}
+
+func watcherServiceDetails(p Payload) *watchercatalog.ServiceDetails {
+	if p.Service.ID == 0 && p.Service.Name == "" && p.Service.ServiceType == "" && p.Service.HealthCheckURL == "" {
+		return nil
+	}
+	return &watchercatalog.ServiceDetails{
+		ID:             p.Service.ID,
+		Name:           p.Service.Name,
+		ServiceType:    p.Service.ServiceType,
+		HealthCheckURL: p.Service.HealthCheckURL,
+	}
+}
+
+func watcherVersionDetails(p Payload) *watchercatalog.VersionDetails {
+	if p.Version.DiscoveredVersion == "" && p.Version.CurrentVersion == "" && p.Version.BlockReason == "" && !p.Version.WillDeploy {
+		return nil
+	}
+	return &watchercatalog.VersionDetails{
+		DiscoveredVersion: p.Version.DiscoveredVersion,
+		CurrentVersion:    p.Version.CurrentVersion,
+		WillDeploy:        p.Version.WillDeploy,
+		BlockReason:       p.Version.BlockReason,
+	}
+}
+
+func watcherAttemptDetails(p Payload) *watchercatalog.AttemptDetails {
+	if p.Attempt.ID == 0 && p.Attempt.Kind == "" && p.Attempt.Status == "" {
+		return nil
+	}
+	return &watchercatalog.AttemptDetails{
+		ID:                  p.Attempt.ID,
+		Kind:                p.Attempt.Kind,
+		Reason:              p.Attempt.Reason,
+		TriggeredBy:         p.Attempt.TriggeredBy,
+		Status:              p.Attempt.Status,
+		TargetVersion:       p.Attempt.TargetVersion,
+		FromVersion:         p.Attempt.FromVersion,
+		FailedTargetVersion: p.Attempt.FailedTargetVersion,
+		FailurePhase:        p.Attempt.FailurePhase,
+		Error:               p.Attempt.Error,
+		ParentAttemptID:     p.Attempt.ParentAttemptID,
+		RootAttemptID:       p.Attempt.RootAttemptID,
+	}
+}
+
+func watcherHealthDetails(p Payload) *watchercatalog.HealthDetails {
+	if p.Health.PreviousStatus == "" && p.Health.CurrentStatus == "" && p.Health.HTTPStatus == 0 && p.Health.Error == "" {
+		return nil
+	}
+	return &watchercatalog.HealthDetails{
+		PreviousStatus: p.Health.PreviousStatus,
+		CurrentStatus:  p.Health.CurrentStatus,
+		HTTPStatus:     p.Health.HTTPStatus,
+		Error:          p.Health.Error,
+		CheckedAt:      p.Health.CheckedAt,
+		Source:         p.Health.Source,
+	}
+}
+
+func watcherFailedDeliveryDetails(p Payload) *watchercatalog.FailedDeliveryDetails {
+	if p.FailedDelivery.EventID == "" && p.FailedDelivery.DeliveryID == "" {
+		return nil
+	}
+	return &watchercatalog.FailedDeliveryDetails{
+		EventID:            p.FailedDelivery.EventID,
+		EventType:          p.FailedDelivery.EventType,
+		DeliveryID:         p.FailedDelivery.DeliveryID,
+		AttemptNumber:      p.FailedDelivery.AttemptNumber,
+		ResponseStatusCode: p.FailedDelivery.ResponseStatusCode,
+		Error:              p.FailedDelivery.Error,
+		Summary:            p.FailedDelivery.Summary,
+	}
 }
 
 func standardWebhookHeaders(headers http.Header) (timestamp, signature, webhookID string) {
@@ -336,109 +406,6 @@ func canonicalWatcherEventType(value string) string {
 		return value
 	}
 	return "watcher." + strings.ReplaceAll(value, "_", ".")
-}
-
-func watcherSeverity(eventType string, p Payload) domain.Severity {
-	switch {
-	case strings.Contains(eventType, "rollback.failed"), strings.Contains(eventType, "delivery.exhausted"):
-		return domain.SeverityCritical
-	case strings.Contains(eventType, "failed"), strings.Contains(eventType, "unhealthy"):
-		return domain.SeverityError
-	case strings.Contains(eventType, "cancelled"):
-		return domain.SeverityWarning
-	case strings.Contains(eventType, "webhook.test"):
-		return domain.SeverityInfo
-	case strings.Contains(eventType, "health.changed"):
-		if strings.EqualFold(p.Health.CurrentStatus, "unhealthy") || p.Health.HTTPStatus >= 500 {
-			return domain.SeverityError
-		}
-		return domain.SeverityWarning
-	default:
-		return domain.SeverityInfo
-	}
-}
-
-func watcherLifecycle(eventType string) domain.Lifecycle {
-	switch {
-	case strings.Contains(eventType, "started"):
-		return domain.LifecycleStarted
-	case strings.Contains(eventType, "found"), strings.Contains(eventType, "test"):
-		return domain.LifecycleTriggered
-	case strings.Contains(eventType, "changed"):
-		return domain.LifecycleUpdated
-	case strings.Contains(eventType, "succeeded"):
-		return domain.LifecycleSucceeded
-	case strings.Contains(eventType, "failed"):
-		return domain.LifecycleFailed
-	case strings.Contains(eventType, "resolved"), strings.Contains(eventType, "healthy"):
-		return domain.LifecycleResolved
-	case strings.Contains(eventType, "cancelled"):
-		return domain.LifecycleCancelled
-	case strings.Contains(eventType, "rolled_back"):
-		return domain.LifecycleRolledBack
-	default:
-		return domain.LifecycleTriggered
-	}
-}
-
-func watcherAction(eventType string) string {
-	parts := strings.Split(eventType, ".")
-	if len(parts) == 0 {
-		return eventType
-	}
-	return parts[len(parts)-1]
-}
-
-func fallbackWatcherTitle(eventType string, p Payload) string {
-	switch {
-	case p.Version.DiscoveredVersion != "":
-		return fmt.Sprintf("Version found: %s", p.Version.DiscoveredVersion)
-	case p.Attempt.TargetVersion != "":
-		return strings.ReplaceAll(eventType, ".", " ")
-	case p.Health.CurrentStatus != "":
-		return fmt.Sprintf("Health changed: %s", p.Health.CurrentStatus)
-	case p.FailedDelivery.EventID != "":
-		return fmt.Sprintf("Webhook delivery exhausted: %s", p.FailedDelivery.EventType)
-	default:
-		return strings.ReplaceAll(eventType, ".", " ")
-	}
-}
-
-func watcherFingerprint(sourceEventID, eventType string, p Payload) string {
-	if sourceEventID != "" {
-		return sourceEventID
-	}
-	if p.Attempt.RootAttemptID > 0 {
-		return fmt.Sprintf("%s:%d", eventType, p.Attempt.RootAttemptID)
-	}
-	if p.FailedDelivery.EventID != "" {
-		return p.FailedDelivery.EventID
-	}
-	return eventType
-}
-
-func fallbackWatcherSummary(eventType, serviceName string, p Payload) string {
-	switch {
-	case p.Version.DiscoveredVersion != "":
-		if p.Version.BlockReason != "" {
-			return fmt.Sprintf("Watcher found %s but rollout is blocked: %s", p.Version.DiscoveredVersion, p.Version.BlockReason)
-		}
-		return fmt.Sprintf("Watcher found version %s", p.Version.DiscoveredVersion)
-	case p.Attempt.Status != "":
-		return firstNonEmpty(p.Summary, p.Attempt.Error, p.Attempt.Status)
-	case p.Health.CurrentStatus != "":
-		return firstNonEmpty(p.Summary, fmt.Sprintf("Service health is now %s", p.Health.CurrentStatus))
-	case p.FailedDelivery.EventID != "":
-		return firstNonEmpty(p.Summary, p.FailedDelivery.Summary)
-	case p.LegacyError.Message != "":
-		return p.LegacyError.Message
-	case p.Attempt.Error != "":
-		return p.Attempt.Error
-	case serviceName != "":
-		return fmt.Sprintf("%s %s", serviceName, watcherAction(eventType))
-	default:
-		return strings.ReplaceAll(eventType, ".", " ")
-	}
 }
 
 func parseTimestamp(value string, fallback time.Time) time.Time {

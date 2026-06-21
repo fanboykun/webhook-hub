@@ -18,29 +18,32 @@ type receiptModel struct {
 }
 
 type eventModel struct {
-	ID            string `gorm:"primaryKey"`
-	ReceiptID     string `gorm:"index"`
-	Source        string `gorm:"index"`
-	IntegrationID string
-	SourceEventID string
-	Type          string `gorm:"index"`
-	Action        string
-	Lifecycle     string
-	Severity      string
-	Title         string
-	Summary       string
-	Service       string `gorm:"index:idx_events_service_env_occurred"`
-	Environment   string `gorm:"index:idx_events_service_env_occurred"`
-	Release       string
-	CommitSHA     string
-	Actor         string
-	Fingerprint   string `gorm:"index"`
-	GroupKey      string
-	URL           string
-	OccurredAt    time.Time `gorm:"index:idx_events_service_env_occurred"`
-	LabelsJSON    []byte
-	FieldsJSON    []byte
-	CreatedAt     time.Time
+	ID             string `gorm:"primaryKey"`
+	ReceiptID      string `gorm:"index"`
+	Source         string `gorm:"index"`
+	IntegrationID  string
+	SourceEventID  string
+	Type           string `gorm:"index"`
+	Action         string
+	Lifecycle      string
+	Severity       string
+	Title          string
+	Summary        string
+	Service        string `gorm:"index:idx_events_service_env_occurred"`
+	Environment    string `gorm:"index:idx_events_service_env_occurred"`
+	Release        string
+	CommitSHA      string
+	Actor          string
+	Fingerprint    string `gorm:"index"`
+	GroupKey       string
+	URL            string
+	OccurredAt     time.Time `gorm:"index:idx_events_service_env_occurred"`
+	LabelsJSON     []byte
+	MetadataJSON   []byte `gorm:"column:fields_json"`
+	RouteTraceJSON []byte
+	PayloadVersion int
+	PayloadJSON    []byte
+	CreatedAt      time.Time
 }
 
 type deliveryModel struct {

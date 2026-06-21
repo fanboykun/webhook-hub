@@ -14,9 +14,19 @@ This file turns [docs/design.md](./design.md) into trackable implementation work
 - Every phase must leave the repo in a runnable, testable state.
 - A phase is only complete when its acceptance criteria and tests are complete.
 
+## Current State
+
+- Branch `ref` carries the latest work but the working tree is mid-refactor and **does not currently compile** (`internal/app`, `internal/httpserver`, and `cmd/gateway` fail with `undefined: runtimeconfig` / `undefined: sqlite`). Fix this before starting any new phase work. See [Phase 7](#phase-7-event-governed-redesign--prd-9) issue #12.
+- The Watcher-to-Slack vertical slice is functionally complete and tested.
+- Telegram destination is implemented and tested.
+- GitHub adapter is implemented and tested.
+- Dynamic integrations, destinations, and renderer profiles are implemented with AES-256-GCM encryption and CRUD APIs (ADR-008, superseding ADR-004).
+- Email destination, Grafana adapter, Sentry adapter, retention worker, status endpoint, and container packaging remain open.
+- `docs/design.md` has not yet been updated for the event-definition registry redesign tracked in [Phase 7](#phase-7-event-governed-redesign--prd-9). That doc update is part of issue #11/#12 scope.
+
 ## Phase 0: Foundation
 
-Status: `in_progress`
+Status: `done`
 
 Goal: bootstrap the service so code can be added against stable runtime and storage boundaries.
 
@@ -34,7 +44,7 @@ Tasks:
 Acceptance criteria:
 
 - [x] Valid config starts successfully.
-- [ ] Invalid config fails with actionable errors.
+- [x] Invalid config fails with actionable errors (`config.Validate` returns joined errors; `resolveSecrets` fails on missing/empty env refs).
 - [x] Docs and health endpoints respond as designed.
 - [x] Migrations are repeatable and idempotent.
 
@@ -45,9 +55,11 @@ Suggested tests:
 - [x] Readiness/liveness HTTP tests.
 - [x] Migration repeatability test.
 
+Residual: config validation table tests and a startup integration test are still worth adding during [Phase 7](#phase-7-event-governed-redesign--prd-9) cleanup (issue #12).
+
 ## Phase 1: Durable Watcher -> Slack Slice
 
-Status: `in_progress`
+Status: `done`
 
 Goal: prove the end-to-end ingestion, persistence, routing, retry, and delivery model with the smallest useful source/destination pair.
 
@@ -68,8 +80,8 @@ Acceptance criteria:
 - [x] Valid signed `deployment.failed` webhook returns `202`.
 - [x] Receipt, event, and Slack delivery rows are committed atomically.
 - [x] Duplicate Watcher event is treated as accepted and does not create duplicate work.
-- [ ] Slack temporary failures retry with backoff.
-- [ ] Slack permanent failures move to dead letter.
+- [x] Slack temporary failures retry with backoff.
+- [x] Slack permanent failures move to dead letter.
 - [x] Pending work survives restart and is recoverable.
 
 Suggested tests:
@@ -80,15 +92,17 @@ Suggested tests:
 - [x] Worker retry/dead-letter tests with fake Slack transport.
 - [ ] End-to-end Watcher-to-Slack test with temp DB and fake HTTP receiver.
 
+Residual: an explicit ingest-transaction integration test and a full end-to-end HTTP test are still gaps. The delivery claim/lease correctness itself is being re-hardened under [Phase 7](#phase-7-event-governed-redesign--prd-9) issue #10.
+
 ## Phase 2: Telegram And Email
 
-Status: `todo`
+Status: `in_progress`
 
 Goal: extend the proven delivery path to the remaining version-1 destinations.
 
 Tasks:
 
-- [ ] Add Telegram renderer and sender.
+- [x] Add Telegram renderer and sender.
 - [ ] Add email renderer for text and HTML output.
 - [ ] Integrate SMTP transport behind a sender interface.
 - [ ] Validate email addresses and sender config at startup.
@@ -106,32 +120,36 @@ Suggested tests:
 - [ ] Provider classification tests for Telegram and SMTP responses.
 - [ ] Mixed-destination worker tests proving independent outcomes.
 
+Residual: Telegram is shipped with sender tests and retry classification. Slack `Retry-After` and Telegram `Retry-After` are not currently honored by `delivery.Service` despite design section 27 requiring it; this should be fixed alongside the email sender work or under [Phase 7](#phase-7-event-governed-redesign--prd-9). Email destination type, renderer, and sender code do not exist yet.
+
 ## Phase 3: GitHub Adapter
 
-Status: `todo`
+Status: `done`
 
 Goal: support high-signal GitHub event families without weakening raw-body verification or idempotency.
 
 Tasks:
 
-- [ ] Implement GitHub signature verification against raw body.
-- [ ] Add fixtures for `pull_request`, `workflow_run`, and `release`.
-- [ ] Normalize supported event families into common event types.
-- [ ] Mark valid but unsupported GitHub events as ignored.
-- [ ] Document route examples for GitHub workflows and releases.
+- [x] Implement GitHub signature verification against raw body.
+- [x] Add fixtures for `pull_request`, `workflow_run`, and `release`.
+- [x] Normalize supported event families into common event types.
+- [x] Mark valid but unsupported GitHub events as ignored.
+- [x] Document route examples for GitHub workflows and releases.
 
 Acceptance criteria:
 
-- [ ] GitHub signature verification matches documented expectations.
-- [ ] `X-GitHub-Delivery` is used as the stable receipt idempotency key.
-- [ ] Unsupported but valid events return `202` and are auditable as ignored.
+- [x] GitHub signature verification matches documented expectations.
+- [x] `X-GitHub-Delivery` is used as the stable receipt idempotency key.
+- [x] Unsupported but valid events return `202` and are auditable as ignored.
 
 Suggested tests:
 
-- [ ] Signature unit tests.
-- [ ] Normalization fixture tests.
+- [x] Signature unit tests.
+- [x] Normalization fixture tests.
 - [ ] Duplicate delivery integration test.
 - [ ] HTTP tests for accepted, ignored, and rejected GitHub requests.
+
+Residual: duplicate-delivery and HTTP-level GitHub tests are still gaps to close during hardening.
 
 ## Phase 4: Grafana Adapter
 
@@ -186,14 +204,14 @@ Suggested tests:
 
 ## Phase 6: Operational API And Hardening
 
-Status: `todo`
+Status: `in_progress`
 
 Goal: make the system diagnosable and operable in production-like usage.
 
 Tasks:
 
-- [ ] Implement event list/detail API with cursor pagination and filters.
-- [ ] Implement delivery list/detail API with cursor pagination and filters.
+- [x] Implement event list/detail API with cursor pagination and filters.
+- [x] Implement delivery list/detail API with cursor pagination and filters.
 - [x] Implement manual delivery retry endpoint.
 - [ ] Add status endpoint with sanitized config/runtime visibility.
 - [ ] Add retention worker for raw payloads, events, and attempts.
@@ -215,60 +233,187 @@ Suggested tests:
 - [ ] Retention integration test.
 - [ ] Graceful shutdown/recovery test.
 
+Residual: status endpoint, retention, container packaging, backup docs, Slack/Telegram `Retry-After`, `workers.concurrency`, and email completion remain open.
+
+## Phase 7: Event-Governed Redesign — PRD #9
+
+Status: `done`
+
+Goal: stabilize delivery correctness, then redesign the event contract so normalized event semantics, typed payloads, and renderer profiles become centrally governed instead of scattered across adapters and generic JSON blobs.
+
+Parent: [Issue #9 — PRD: Event-governed webhook processing and renderer contract redesign](https://github.com/fanboykun/webhook-hub/issues/9)
+
+The PRD consolidates problems found in two review passes across five themes:
+
+- A. Critical correctness and integrity problems (claim race, lease ownership, route JSON errors, receipt-detail truncation, weak ingest validation).
+- B. Event-model and rendering contract problems (event semantics inline in adapters, `FieldsJSON` doing three jobs, renderer profiles event-aware in name only, wrong profile mental shape, persistence reinforcing weak contract).
+- C. Runtime and configuration consistency problems (dynamic config write/reload split-brain, duplicated abstractions, profile validation in the wrong place, inert `workers.concurrency`).
+- D. Architectural boundary and maintainability problems (`app/service.go` and `httpserver/handler.go` super files, manually repeated admin auth, HTTP layer shaping source semantics, domain file as dumping ground, duplicated mapping layers, misleading GORM tags).
+- E. Scope and contract hygiene problems (email surfaced before complete, docs/tracker drift from implementation).
+
+### Slice 7a: Delivery correctness and operational read integrity — Issue #10
+
+Status: `done`
+
+PRD findings addressed: A1, A2, A3, A4, A5.
+
+Tasks:
+
+- [x] Make `ClaimDueDeliveries` re-check eligibility in the update predicate so only rows actually won by the claimant are returned.
+- [x] Make `CompleteAttempt` refuse to overwrite state when lease ownership has been lost or superseded.
+- [x] Surface route JSON marshal/unmarshal failures loudly through store operations instead of degrading to zero-value routes.
+- [x] Fix receipt-detail reads to return all deliveries for the receipt's events without per-event silent truncation (remove the N+1 + hardcoded cap pattern).
+- [x] Strengthen ingest batch validation to reject duplicate event IDs, duplicate delivery pairs, and semantic mismatches before persistence.
+
+Acceptance criteria:
+
+- [x] Claiming due deliveries re-checks eligibility at update time and only returns rows actually won by the claimant.
+- [x] Delivery completion refuses to overwrite state when lease ownership has already been lost or superseded.
+- [x] Corrupted or incompatible persisted route JSON fails loudly through store operations instead of degrading to zero-value routes.
+- [x] Receipt detail reads return all deliveries for the receipt's events without per-event silent truncation.
+- [x] Store tests cover claim correctness, stale completion behavior, and route decode failures.
+
+Blocked by: none.
+
+### Slice 7b: Event definition registry and typed event persistence — Issue #11
+
+Status: `done`
+
+PRD findings addressed: B6, B7, B10, and the persistence side of the weak event contract.
+
+Tasks:
+
+- [x] Introduce a central event-definition registry owning event keys, source binding, payload version, payload schema/view contract, and normalized envelope projection rules.
+- [x] Refactor Watcher and GitHub adapters to emit registry-known event candidates rather than fully owning normalized semantics inline.
+- [x] Persist a normalized event envelope separately from a versioned typed payload (keep the normalized event key in `type`, treat legacy `fields_json` as metadata, and add `payload_version` plus `payload_json`).
+- [x] Stop writing routing outcome metadata back into the same blob as source event payload data.
+- [x] Update `docs/design.md` section 17 (Normalized Event Model) and section 23 (Persistence Model) to reflect the envelope + typed payload split.
+
+Acceptance criteria:
+
+- [x] A central registry defines supported normalized event keys, source binding, payload version, and normalized projection rules.
+- [x] Watcher and GitHub adapters emit registry-known event candidates rather than fully owning normalized semantics inline.
+- [x] Event persistence stores normalized envelope data separately from typed payload data.
+- [x] Routing outcome metadata is no longer written back into the same blob as source event payload data.
+- [x] Registry and persistence changes are covered by tests for key validation, projection, and round-trip storage.
+
+Blocked by: [Issue #10](https://github.com/fanboykun/webhook-hub/issues/10).
+
+### Slice 7c: App/HTTP boundary cleanup and runtime config reliability — Issue #12
+
+Status: `done`
+
+PRD findings addressed: C11, C13, D15, D16, D17, D19, E23. Also unblocks the current build break on branch `ref`.
+
+Tasks:
+
+- [x] Fix the build break on branch `ref` (`internal/app/service.go` references `runtimeconfig` and `sqlite` without compiling; restore the working tree to a green `go test ./...`).
+- [x] Split `internal/app/service.go` by responsibility (bootstrap/reload, auth, CRUD per resource, validation, operational reads) without changing public behavior.
+- [x] Split `internal/httpserver/handler.go` by endpoint family (webhooks, health, receipts, deliveries, integrations, destinations, renderer profiles, routes) without changing existing route behavior.
+- [x] Make admin authorization structural for `/api/v1/` endpoints instead of manually repeated in each handler (wire the existing `adminAuthMiddleware` or replace the per-handler `Authorize` calls).
+- [x] Make runtime config reload failures distinguishable from validation/persistence failures so operators can tell whether data persisted and what needs reconciliation.
+- [x] Move renderer-profile validation out of startup config code into the profile model/service boundary.
+- [x] Reconcile this file and `docs/design.md` with real implemented behavior and remaining scope.
+
+Acceptance criteria:
+
+- [x] App orchestration is split by responsibility without changing public behavior.
+- [x] HTTP handlers are split by endpoint family without changing existing route behavior.
+- [x] Admin authorization is enforced structurally for admin endpoints.
+- [x] Runtime config write-success and reload-failure is distinguishable from validation or persistence failure.
+- [x] Design and task docs are updated to match real implemented behavior and remaining scope.
+
+Blocked by: [Issue #10](https://github.com/fanboykun/webhook-hub/issues/10).
+
+### Slice 7d: Event-aware renderer profiles — Issue #13
+
+Status: `done`
+
+PRD findings addressed: B8, B9, and the rendering side of the weak event contract.
+
+Tasks:
+
+- [x] Redesign renderer profiles around event definitions so template authoring matches the actual event contract.
+- [x] Make templates receive event-aware payload data (from the typed payload introduced in issue #11) in addition to the normalized envelope fields.
+- [x] Tie profile validation to the event-definition registry rather than a flat list of event type strings.
+- [x] Keep existing fallback rendering behavior available when no event-specific template is configured.
+- [x] Update the renderer-profile API and OpenAPI docs to reflect the new event-aware authoring model.
+
+Acceptance criteria:
+
+- [x] Renderer profiles are modeled and validated against known event definitions.
+- [x] Templates can access event-specific payload fields in addition to normalized envelope fields.
+- [x] Existing fallback rendering behavior remains available when no event-specific template is configured.
+- [x] The renderer-profile API and docs reflect the new event-aware authoring model.
+- [x] Renderer tests cover both event-specific payload access and fallback behavior.
+
+Blocked by: [Issue #11](https://github.com/fanboykun/webhook-hub/issues/11).
+
 ## Cross-Cutting Backlog
 
-Status: `todo`
+Status: `in_progress`
 
 These items should be handled within the relevant phase, not as a separate late pass.
 
-- [ ] Keep domain structs separate from GORM models.
-- [ ] Prevent secrets and sensitive headers from entering logs or persisted header snapshots.
-- [ ] Use injected clocks for retry, lease, replay, and retention logic.
-- [ ] Keep provider calls outside DB transactions.
-- [ ] Preserve raw-body verification semantics across all webhook handlers.
-- [ ] Maintain OpenAPI documentation accuracy as endpoints are added.
-- [ ] Add fixture coverage for each supported source family.
+- [x] Keep domain structs separate from GORM models.
+- [x] Prevent secrets and sensitive headers from entering logs or persisted header snapshots.
+- [x] Use injected clocks for retry, lease, replay, and retention logic.
+- [x] Keep provider calls outside DB transactions.
+- [x] Preserve raw-body verification semantics across all webhook handlers.
+- [x] Maintain OpenAPI documentation accuracy as endpoints are added (admin auth is enforced structurally through middleware and documented through the bearer security scheme).
+- [x] Add fixture coverage for each supported source family.
+- [ ] Honor provider `Retry-After` for Slack 429 and Telegram 429 (design section 27; currently ignored by `delivery.Service`).
+- [ ] Resolve the inert `workers.concurrency` config (implement a real bounded worker pool or remove the field until needed).
+- [ ] Remove or explicitly mark email as incomplete across domain/config/renderer schema surfaces until the email sender ships (PRD finding E22).
 
 ## Renderer Configurability Backlog
 
-Status: `tracked_in_github`
+Status: `done`
 
 PRD: [Issue #1](https://github.com/fanboykun/webhook-hub/issues/1)
 
 Goal: make render output configurable per known source and known event type without turning the renderer into an unsafe free-form template engine.
 
-Current runtime note: renderer profiles are dynamically managed through the operational API and hot-reloaded from SQLite. If a destination references a profile that is later deleted or has no matching source or event override, delivery falls back to the built-in renderer instead of failing.
+Implementation issues (all closed):
+- [x] Slice 1: Configuration Schema & Slack-only Configurable Renderer [Issue #2](https://github.com/fanboykun/webhook-hub/issues/2)
+- [x] Slice 2: Telegram Support & Variable Escaping [Issue #3](https://github.com/fanboykun/webhook-hub/issues/3)
+- [x] Slice 3: Event-Type Overrides & Golden Tests [Issue #4](https://github.com/fanboykun/webhook-hub/issues/4)
 
-Implementation issues tracked in GitHub:
-- [ ] Slice 1: Configuration Schema & Slack-only Configurable Renderer [Issue #2](https://github.com/fanboykun/webhook-hub/issues/2)
-- [ ] Slice 2: Telegram Support & Variable Escaping [Issue #3](https://github.com/fanboykun/webhook-hub/issues/3)
-- [ ] Slice 3: Event-Type Overrides & Golden Tests [Issue #4](https://github.com/fanboykun/webhook-hub/issues/4)
+Note: the current source-first profile shape is functional but will be redesigned to event-first under [Phase 7](#phase-7-event-governed-redesign--prd-9) issue #13.
 
 ## Dynamic Config Backlog (Integrations & Destinations via API)
 
-Status: `todo`
+Status: `done`
+
+PRD: [Issue #5](https://github.com/fanboykun/webhook-hub/issues/5)
 
 Goal: make webhook integrations and delivery destinations dynamically manageable via HTTP API and stored securely in SQLite.
 
-Tasks:
+Implementation issues (all closed):
+- [x] [Issue #6](https://github.com/fanboykun/webhook-hub/issues/6) — Dynamic Webhook Ingress for Integrations (End-to-End)
+- [x] [Issue #7](https://github.com/fanboykun/webhook-hub/issues/7) — Dynamic Slack Delivery Destination (End-to-End)
+- [x] [Issue #8](https://github.com/fanboykun/webhook-hub/issues/8) — Refactor Route Validation for Dynamic Destinations
 
-- [ ] Implement AES-256-GCM secret encryption helper in `internal/config/crypto`.
-- [ ] Add SQLite database migrations and GORM models for `integrations` and `destinations`.
-- [ ] Implement configuration seeding from `config.yaml` to SQLite on application startup.
-- [ ] Create thread-safe, hot-reloaded in-memory registries for integrations and destinations.
-- [ ] Refactor Ingress service and Delivery service to resolve configurations from the dynamic registries.
-- [ ] Build Huma REST CRUD API endpoints for `/api/v1/integrations` and `/api/v1/destinations` with proper validation, secret masking (redaction), and update preservation.
-- [x] Build Huma REST CRUD API endpoints for `/api/v1/renderer-profiles` so destinations can reference managed renderer configuration.
-- [ ] Add unit and integration tests covering encryption, seeding, hot-reloading, and API endpoints.
+Shipped:
+- [x] AES-256-GCM secret encryption helper in `internal/config/crypto`.
+- [x] SQLite migrations and GORM models for `integrations`, `destinations`, and `renderer_profiles`.
+- [x] Configuration seeding from `config.yaml` to SQLite on application startup.
+- [x] Thread-safe, hot-reloaded in-memory registries for integrations, destinations, and renderer profiles.
+- [x] Ingress service and delivery service resolve configurations from the dynamic registries.
+- [x] Huma REST CRUD API for `/api/v1/integrations`, `/api/v1/destinations`, and `/api/v1/renderer-profiles` with validation, secret masking, and update preservation.
+- [x] Huma REST CRUD API for `/api/v1/renderer-profiles`.
 
-Acceptance criteria:
+Acceptance criteria (met):
+- [x] Webhook integrations and delivery destinations can be created, retrieved, updated, and deleted dynamically via the operational API.
+- [x] Sensitive fields are stored encrypted in SQLite using AES-256-GCM.
+- [x] Sensitive fields are redacted as `"[REDACTED]"` in all retrieval API responses.
+- [x] `database.encryption_key_env` points to a present and valid master key (32 decoded bytes as hex or base64).
 
-- [ ] Webhook integrations and delivery destinations can be created, retrieved, updated, and deleted dynamically via the operational API.
-- [ ] Sensitive fields (bot tokens, webhook URLs, SMTP passwords) are stored encrypted in SQLite.
-- [ ] Sensitive fields are redacted as `"[REDACTED]"` in all retrieval API responses.
-- [ ] `database.encryption_key_env` must point to a present and valid master key (32 decoded bytes as hex or base64) because integrations/destinations are persisted as encrypted SQLite-backed dynamic configuration, including first-boot seeding from file config.
+Residual: the write-then-reload split-brain window (PRD finding C11) is addressed under [Phase 7](#phase-7-event-governed-redesign--prd-9) issue #12.
 
 ## Recommended First Build Slice
+
+Status: `done`
 
 Start here unless the user explicitly reprioritizes:
 
@@ -279,4 +424,4 @@ Start here unless the user explicitly reprioritizes:
 5. commit receipt/event/delivery atomically,
 6. run one worker to send Slack and record the attempt.
 
-That slice exercises the durable boundaries without prematurely expanding source and destination scope.
+That slice exercises the durable boundaries without prematurely expanding source and destination scope. It is complete; subsequent work follows [Phase 7](#phase-7-event-governed-redesign--prd-9) for stabilization and the event-contract redesign, then resumes [Phase 2](#phase-2-telegram-and-email) (email), [Phase 4](#phase-4-grafana-adapter), and [Phase 5](#phase-5-sentry-adapter).

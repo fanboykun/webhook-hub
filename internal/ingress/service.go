@@ -124,14 +124,12 @@ func (s *Service) Handle(ctx context.Context, source domain.Source, req InboundR
 				UpdatedAt:       now,
 			})
 		}
-		fields := map[string]any{}
-		if len(event.FieldsJSON) > 0 {
-			_ = json.Unmarshal(event.FieldsJSON, &fields)
-		}
-		fields["route_match_count"] = len(matches)
-		fields["route_ids"] = matchedRouteIDs
-		fields["destination_ids"] = matchedDestinationIDs
-		event.FieldsJSON, _ = json.Marshal(fields)
+		traceJSON, _ := json.Marshal(domain.RouteTrace{
+			RouteMatchCount: len(matches),
+			RouteIDs:        matchedRouteIDs,
+			DestinationIDs:  matchedDestinationIDs,
+		})
+		event.RouteTraceJSON = traceJSON
 		totalMatches += len(deliveries)
 		batch.Events = append(batch.Events, event)
 		batch.DeliveryByEvent[event.ID] = deliveries
