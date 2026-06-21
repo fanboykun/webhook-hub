@@ -13,9 +13,11 @@ func TestEngineDestinationsDedupes(t *testing.T) {
 	})
 
 	matches := engine.Destinations(domain.Event{
-		ID:     "evt1",
-		Source: domain.SourceWatcher,
-		Type:   "watcher.deployment.failed",
+		ID: "evt1",
+		EventEnvelope: domain.EventEnvelope{
+			Source: domain.SourceWatcher,
+			Key:    "watcher.deployment.failed",
+		},
 	})
 
 	if len(matches) != 2 {

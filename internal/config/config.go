@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/fanboykun/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/eventcatalog"
+	eventdefaults "github.com/fanboykun/webhook-hub/internal/eventcatalog/defaults"
 	"github.com/spf13/viper"
 )
 
@@ -27,11 +29,18 @@ type Config struct {
 	RendererProfiles map[string]ProfileConfig     `mapstructure:"renderer_profiles"`
 }
 
-type ProfileConfig map[string]SourceConfig
+type ProfileConfig struct {
+	Bindings []ProfileBindingConfig `mapstructure:"bindings"`
+}
 
-type SourceConfig struct {
-	Default   DestinationTemplates            `mapstructure:"default"`
-	Overrides map[string]DestinationTemplates `mapstructure:"overrides"`
+type ProfileBindingConfig struct {
+	Event     EventBindingConfig   `mapstructure:"event"`
+	Templates DestinationTemplates `mapstructure:"templates"`
+}
+
+type EventBindingConfig struct {
+	Source domain.Source `mapstructure:"source"`
+	Key    string        `mapstructure:"key"`
 }
 
 type DestinationTemplates struct {
@@ -55,17 +64,19 @@ type EmailTemplateConfig struct {
 }
 
 type TemplateContext struct {
+	Source      string
+	EventKey    string
+	EventType   string
 	Title       string
 	Summary     string
 	Severity    string
 	Lifecycle   string
 	Service     string
 	Environment string
-	Release     string
-	CommitSHA   string
-	Actor       string
-	URL         string
+	SourceURL   string
 	OccurredAt  time.Time
+	Payload     map[string]any
+	Metadata    map[string]any
 }
 
 type ServerConfig struct {
@@ -311,25 +322,39 @@ func (c Config) Validate() error {
 
 func (c *Config) ValidateRendererProfiles() error {
 	var errs []error
+	registry := eventdefaults.Registry()
 	for profileName, profile := range c.RendererProfiles {
-		for sourceName, sourceConfig := range profile {
-			if !domain.IsKnownSource(domain.Source(sourceName)) {
-				errs = append(errs, fmt.Errorf("profile %q: unknown source %q", profileName, sourceName))
+		if len(profile.Bindings) == 0 {
+			errs = append(errs, fmt.Errorf("profile %q must contain at least one binding", profileName))
+			continue
+		}
+		seen := make(map[string]struct{}, len(profile.Bindings))
+		for _, binding := range profile.Bindings {
+			if binding.Event.Source == "" {
+				errs = append(errs, fmt.Errorf("profile %q binding source is required", profileName))
 				continue
 			}
-
-			if err := validateDestinationTemplates(sourceConfig.Default); err != nil {
-				errs = append(errs, fmt.Errorf("profile %q source %q default: %w", profileName, sourceName, err))
+			key := strings.TrimSpace(binding.Event.Key)
+			if key == "" {
+				errs = append(errs, fmt.Errorf("profile %q binding key is required", profileName))
+				continue
 			}
-
-			for eventType, destTemplates := range sourceConfig.Overrides {
-				if !domain.IsKnownEventType(eventType) {
-					errs = append(errs, fmt.Errorf("profile %q source %q override: unknown event type %q", profileName, sourceName, eventType))
-					continue
+			composite := string(binding.Event.Source) + ":" + key
+			if _, exists := seen[composite]; exists {
+				errs = append(errs, fmt.Errorf("profile %q contains duplicate binding %s", profileName, composite))
+				continue
+			}
+			seen[composite] = struct{}{}
+			if _, ok := registry.Resolve(binding.Event.Source, key); !ok {
+				if definition, exists := registry.Get(eventcatalog.Key(key)); exists && definition.Source != binding.Event.Source {
+					errs = append(errs, fmt.Errorf("profile %q binding %q belongs to source %q, not %q", profileName, key, definition.Source, binding.Event.Source))
+				} else {
+					errs = append(errs, fmt.Errorf("profile %q binding: unknown event %q for source %q", profileName, key, binding.Event.Source))
 				}
-				if err := validateDestinationTemplates(destTemplates); err != nil {
-					errs = append(errs, fmt.Errorf("profile %q source %q override %q: %w", profileName, sourceName, eventType, err))
-				}
+				continue
+			}
+			if err := validateDestinationTemplates(binding.Templates); err != nil {
+				errs = append(errs, fmt.Errorf("profile %q binding %s: %w", profileName, composite, err))
 			}
 		}
 	}
@@ -338,6 +363,9 @@ func (c *Config) ValidateRendererProfiles() error {
 
 func validateDestinationTemplates(dt DestinationTemplates) error {
 	var errs []error
+	if dt.Slack == nil && dt.Telegram == nil && dt.Email == nil {
+		errs = append(errs, errors.New("at least one destination template is required"))
+	}
 	if dt.Slack != nil {
 		if err := ValidateTemplate(dt.Slack.Title); err != nil {
 			errs = append(errs, fmt.Errorf("slack title: %w", err))
@@ -415,8 +443,8 @@ func IsTelegramChatID(value string) bool {
 		}
 		return true
 	}
-	if strings.HasPrefix(value, "-") {
-		value = strings.TrimPrefix(value, "-")
+	if after, ok := strings.CutPrefix(value, "-"); ok {
+		value = after
 	}
 	if value == "" {
 		return false

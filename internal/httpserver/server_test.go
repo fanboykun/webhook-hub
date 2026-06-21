@@ -357,8 +357,8 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get renderer profile expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"source":"watcher"`) {
-		t.Fatalf("expected renderer profile detail to include watcher source, body=%s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), `"key":"watcher.deployment.failed"`) {
+		t.Fatalf("expected renderer profile detail to include event binding, body=%s", rec.Body.String())
 	}
 
 	updateIntegrationBody := []byte(`{"id":"github-main","source":"github","secret":"[REDACTED]"}`)
@@ -379,7 +379,7 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 		t.Fatalf("expected preserved integration secret, got %q", integration.Secret)
 	}
 
-	updateProfileBody := []byte(`{"id":"detailed","sources":[{"source":"watcher","default":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"},"telegram":{"text":"<b>{{.Title}}</b>"}}}]}`)
+	updateProfileBody := []byte(`{"id":"detailed","bindings":[{"event":{"source":"watcher","key":"watcher.deployment.failed"},"templates":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"},"telegram":{"text":"<b>{{.Title}}</b>"}}}]}`)
 	req = httptest.NewRequest(http.MethodPut, "/api/v1/renderer-profiles/detailed", bytes.NewReader(updateProfileBody))
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	req.Header.Set("Content-Type", "application/json")
@@ -393,7 +393,14 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get renderer profile failed: %v", err)
 	}
-	if profile.Profile["watcher"].Default.Telegram == nil {
+	var found *domain.RendererDestinationTemplates
+	for _, b := range profile.Profile.Bindings {
+		if b.Event.Key == "watcher.deployment.failed" {
+			found = &b.Templates
+			break
+		}
+	}
+	if found == nil || found.Telegram == nil {
 		t.Fatalf("expected updated renderer profile to persist telegram template, got %+v", profile.Profile)
 	}
 
@@ -444,7 +451,7 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 		t.Fatalf("delete integration expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	createProfileBody := []byte(`{"id":"ops-compact","sources":[{"source":"watcher","default":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"}},"overrides":[{"event_type":"watcher.deployment.failed","templates":{"telegram":{"text":"<b>{{.Title}}</b>\n{{.Summary}}"}}}]}]}`)
+	createProfileBody := []byte(`{"id":"ops-compact","bindings":[{"event":{"source":"watcher","key":"watcher.deployment.failed"},"templates":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"},"telegram":{"text":"<b>{{.Title}}</b>\n{{.Summary}}"}}}]}`)
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/renderer-profiles", bytes.NewReader(createProfileBody))
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	req.Header.Set("Content-Type", "application/json")
@@ -559,16 +566,18 @@ func TestReceiptDetailAuthorizedShowsUnroutedStatus(t *testing.T) {
 		},
 		Events: []domain.Event{
 			{
-				ID:            "e-unrouted",
-				ReceiptID:     "r-unrouted",
-				Source:        domain.SourceWatcher,
-				IntegrationID: "watcher-production",
-				Type:          "watcher.deployment.failed",
-				Severity:      domain.SeverityError,
-				Title:         "deployment failed",
-				Summary:       "health check failed",
-				OccurredAt:    now,
-				CreatedAt:     now,
+				ID:        "e-unrouted",
+				ReceiptID: "r-unrouted",
+				EventEnvelope: domain.EventEnvelope{
+					Source:        domain.SourceWatcher,
+					IntegrationID: "watcher-production",
+					Key:           "watcher.deployment.failed",
+					Severity:      domain.SeverityError,
+					Title:         "deployment failed",
+					Summary:       "health check failed",
+					OccurredAt:    now,
+				},
+				CreatedAt: now,
 			},
 		},
 	}); err != nil {
@@ -912,11 +921,17 @@ func testConfig(t *testing.T) config.Config {
 		},
 		RendererProfiles: map[string]config.ProfileConfig{
 			"detailed": {
-				"watcher": config.SourceConfig{
-					Default: config.DestinationTemplates{
-						Slack: &config.SlackTemplateConfig{
-							Title: "{{.Title}}",
-							Body:  "{{.Summary}}",
+				Bindings: []config.ProfileBindingConfig{
+					{
+						Event: config.EventBindingConfig{
+							Source: domain.SourceWatcher,
+							Key:    "watcher.deployment.failed",
+						},
+						Templates: config.DestinationTemplates{
+							Slack: &config.SlackTemplateConfig{
+								Title: "{{.Title}}",
+								Body:  "{{.Summary}}",
+							},
 						},
 					},
 				},
@@ -946,7 +961,7 @@ func newTestServer(t *testing.T, cfg config.Config, store *sqlite.Store, routes 
 	integrations := runtimeconfig.NewIntegrationRegistry(cfg.Integrations)
 	destinations := runtimeconfig.NewDestinationRegistry(cfg.Destinations)
 	service := ingress.NewService(store, cfg, testRegistry(), engine, integrations, destinations, clock.Real{}, observability.NewLogger(cfg.Logging))
-	appService := app.NewService(cfg, clock.Real{}, store, service, engine, integrations, destinations, runtimeconfig.NewRendererProfileRegistry(cfg.RendererProfiles))
+	appService := app.NewService(cfg, clock.Real{}, store, service, engine, integrations, destinations, runtimeconfig.NewRendererProfileRegistry(runtimeconfig.RendererProfilesFromConfig(cfg.RendererProfiles)))
 	if routes != nil {
 		engine.Replace(routes)
 	}
@@ -959,7 +974,7 @@ func newEncryptedTestServer(t *testing.T, cfg config.Config, store *sqlite.Store
 	integrations := runtimeconfig.NewIntegrationRegistry(cfg.Integrations)
 	destinations := runtimeconfig.NewDestinationRegistry(cfg.Destinations)
 	service := ingress.NewService(store, cfg, testRegistry(), engine, integrations, destinations, clock.Real{}, observability.NewLogger(cfg.Logging))
-	appService := app.NewService(cfg, clock.Real{}, store, service, engine, integrations, destinations, runtimeconfig.NewRendererProfileRegistry(cfg.RendererProfiles))
+	appService := app.NewService(cfg, clock.Real{}, store, service, engine, integrations, destinations, runtimeconfig.NewRendererProfileRegistry(runtimeconfig.RendererProfilesFromConfig(cfg.RendererProfiles)))
 	if err := appService.BootstrapDynamicConfig(context.Background()); err != nil {
 		t.Fatalf("bootstrap dynamic config: %v", err)
 	}
@@ -1002,20 +1017,24 @@ func deliverySeedBatch(now time.Time) domain.IngestBatch {
 		},
 		Events: []domain.Event{
 			{
-				ID:            "e1",
-				ReceiptID:     "r1",
-				Source:        domain.SourceWatcher,
-				IntegrationID: "watcher-production",
-				Type:          "watcher.deployment.failed",
-				Action:        "deployment.failed",
-				Lifecycle:     domain.LifecycleFailed,
-				Severity:      domain.SeverityError,
-				Title:         "deployment failed",
-				Summary:       "health check failed",
-				Service:       "auth-service",
-				Environment:   "production",
-				OccurredAt:    now,
-				CreatedAt:     now,
+				ID:        "e1",
+				ReceiptID: "r1",
+				EventEnvelope: domain.EventEnvelope{
+					Source:        domain.SourceWatcher,
+					IntegrationID: "watcher-production",
+					Key:           "watcher.deployment.failed",
+					Action:        "deployment.failed",
+					Lifecycle:     domain.LifecycleFailed,
+					Severity:      domain.SeverityError,
+					Title:         "deployment failed",
+					Summary:       "health check failed",
+					Scope: domain.EventScope{
+						Service:     "auth-service",
+						Environment: "production",
+					},
+					OccurredAt: now,
+				},
+				CreatedAt: now,
 			},
 		},
 		DeliveryByEvent: map[string][]domain.Delivery{

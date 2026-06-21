@@ -9,6 +9,7 @@ import (
 
 	configcrypto "github.com/fanboykun/webhook-hub/internal/config/crypto"
 	"github.com/fanboykun/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/storage"
 	"gorm.io/gorm"
 )
 
@@ -248,7 +249,11 @@ func (s *Store) ListRoutes(ctx context.Context) ([]domain.Route, error) {
 
 	routes := make([]domain.Route, 0, len(models))
 	for _, model := range models {
-		routes = append(routes, toDomainRoute(model))
+		route, err := toDomainRoute(model)
+		if err != nil {
+			return nil, err
+		}
+		routes = append(routes, route)
 	}
 	return routes, nil
 }
@@ -258,16 +263,22 @@ func (s *Store) GetRoute(ctx context.Context, id string) (domain.Route, error) {
 	if err := s.db.WithContext(ctx).First(&model, "id = ?", id).Error; err != nil {
 		return domain.Route{}, err
 	}
-	return toDomainRoute(model), nil
+	return toDomainRoute(model)
 }
 
 func (s *Store) CreateRoute(ctx context.Context, route domain.Route) error {
-	model := toRouteModel(route)
+	model, err := toRouteModel(route)
+	if err != nil {
+		return err
+	}
 	return s.db.WithContext(ctx).Create(&model).Error
 }
 
 func (s *Store) UpdateRoute(ctx context.Context, route domain.Route) error {
-	model := toRouteModel(route)
+	model, err := toRouteModel(route)
+	if err != nil {
+		return err
+	}
 	return s.db.WithContext(ctx).Model(&routeModel{}).
 		Where("id = ?", route.ID).
 		Updates(map[string]any{
@@ -354,6 +365,31 @@ func (s *Store) ListEventsByReceipt(ctx context.Context, receiptID string) ([]do
 	out := make([]domain.Event, 0, len(models))
 	for _, model := range models {
 		out = append(out, toDomainEvent(model))
+	}
+	return out, nil
+}
+
+func (s *Store) ListDeliveriesByEventIDs(ctx context.Context, eventIDs []string) (map[string][]domain.Delivery, error) {
+	out := make(map[string][]domain.Delivery, len(eventIDs))
+	if len(eventIDs) == 0 {
+		return out, nil
+	}
+
+	var models []deliveryModel
+	if err := s.db.WithContext(ctx).
+		Where("event_id IN ?", eventIDs).
+		Order("created_at ASC").
+		Order("id ASC").
+		Find(&models).Error; err != nil {
+		return nil, err
+	}
+
+	for _, eventID := range eventIDs {
+		out[eventID] = nil
+	}
+	for _, model := range models {
+		delivery := toDomainDelivery(model)
+		out[delivery.EventID] = append(out[delivery.EventID], delivery)
 	}
 	return out, nil
 }
@@ -559,30 +595,41 @@ func (s *Store) toDomainRendererProfile(in rendererProfileModel) (domain.Managed
 func (s *Store) ClaimDueDeliveries(ctx context.Context, claim domain.ClaimRequest) ([]domain.DeliveryEnvelope, error) {
 	var claimed []deliveryModel
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var candidates []deliveryModel
 		if err := tx.
 			Where("(status = ? OR status = ?) AND next_attempt_at <= ? AND (locked_until IS NULL OR locked_until < ?)", domain.DeliveryPending, domain.DeliveryRetryWait, claim.Now, claim.Now).
 			Order("next_attempt_at ASC").
 			Limit(claim.BatchSize).
-			Find(&claimed).Error; err != nil {
+			Find(&candidates).Error; err != nil {
 			return err
 		}
 
 		lockedUntil := claim.Now.Add(claim.LeaseDuration)
-		for i := range claimed {
-			if err := tx.Model(&deliveryModel{}).
-				Where("id = ?", claimed[i].ID).
+		for i := range candidates {
+			result := tx.Model(&deliveryModel{}).
+				Where("id = ? AND (status = ? OR status = ?) AND next_attempt_at <= ? AND (locked_until IS NULL OR locked_until < ?)",
+					candidates[i].ID,
+					string(domain.DeliveryPending),
+					string(domain.DeliveryRetryWait),
+					claim.Now,
+					claim.Now).
 				Updates(map[string]any{
 					"status":       string(domain.DeliveryProcessing),
 					"locked_by":    claim.WorkerID,
 					"locked_until": &lockedUntil,
 					"updated_at":   claim.Now,
-				}).Error; err != nil {
-				return err
+				})
+			if result.Error != nil {
+				return result.Error
 			}
-			claimed[i].Status = string(domain.DeliveryProcessing)
-			claimed[i].LockedBy = claim.WorkerID
-			claimed[i].LockedUntil = &lockedUntil
-			claimed[i].UpdatedAt = claim.Now
+			if result.RowsAffected != 1 {
+				continue
+			}
+			candidates[i].Status = string(domain.DeliveryProcessing)
+			candidates[i].LockedBy = claim.WorkerID
+			candidates[i].LockedUntil = &lockedUntil
+			candidates[i].UpdatedAt = claim.Now
+			claimed = append(claimed, candidates[i])
 		}
 		return nil
 	})
@@ -645,7 +692,16 @@ func (s *Store) CompleteAttempt(ctx context.Context, result domain.AttemptResult
 			updates["sent_at"] = result.CompletedAt
 		}
 
-		return tx.Model(&deliveryModel{}).Where("id = ?", result.DeliveryID).Updates(updates).Error
+		updateResult := tx.Model(&deliveryModel{}).
+			Where("id = ? AND locked_by = ? AND status = ?", result.DeliveryID, result.WorkerID, string(domain.DeliveryProcessing)).
+			Updates(updates)
+		if updateResult.Error != nil {
+			return updateResult.Error
+		}
+		if updateResult.RowsAffected == 0 {
+			return storage.ErrDeliveryLeaseLost
+		}
+		return nil
 	})
 }
 
@@ -673,12 +729,14 @@ func (s *Store) RetryDelivery(ctx context.Context, id string, now time.Time) err
 			return fmt.Errorf("delivery %q is not retryable from status %q", id, delivery.Status)
 		}
 
-		return tx.Model(&deliveryModel{}).Where("id = ?", id).Updates(map[string]any{
-			"status":          string(domain.DeliveryRetryWait),
-			"next_attempt_at": now,
-			"locked_by":       "",
-			"locked_until":    nil,
-			"updated_at":      now,
-		}).Error
+		return tx.Model(&deliveryModel{}).
+			Where("id = ? AND status IN ? AND (locked_until IS NULL OR locked_until < ?)", id, []string{string(domain.DeliveryDeadLetter), string(domain.DeliveryRetryWait)}, now).
+			Updates(map[string]any{
+				"status":          string(domain.DeliveryRetryWait),
+				"next_attempt_at": now,
+				"locked_by":       "",
+				"locked_until":    nil,
+				"updated_at":      now,
+			}).Error
 	})
 }

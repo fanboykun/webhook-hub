@@ -83,6 +83,8 @@ This is a direction, not a requirement to create every package before it is need
 - Keep `README.md` high-signal and operator-facing.
 - Keep `docs/tasks.md` actionable; update status, blockers, and acceptance criteria when scope changes, but do not let it drift from `docs/design.md`.
 - When implementation changes an explicit decision, update `docs/design.md` first or in the same change.
+- **CONTEXT.md Rule (MANDATORY):** You MUST update [CONTEXT.md](file:///home/fanboykun/dev/work/webhook-hub/CONTEXT.md) in the root directory after every interaction or set of changes. This is a strict, non-negotiable rule to ensure the orientation, current work status, and remaining backlog are always up to date and traceable.
+- **Decision Log Rule (MANDATORY):** Any decisions (architectural, design, rules, or technical changes) must be written directly to [docs/adr/](file:///home/fanboykun/dev/work/webhook-hub/docs/adr/) as a small, simple, and straightforward markdown file. This captures rules and decisions cleanly without bloating other files.
 
 ## Testing Expectations
 

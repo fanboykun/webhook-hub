@@ -76,30 +76,42 @@ type Receipt struct {
 	CreatedAt        time.Time
 }
 
+type EventScope struct {
+	Service     string
+	Environment string
+}
+
+type EventEnvelope struct {
+	Source         Source
+	IntegrationID  string
+	SourceEventID  string
+	Key            string
+	Action         string
+	Lifecycle      Lifecycle
+	Severity       Severity
+	Title          string
+	Summary        string
+	Scope          EventScope
+	Fingerprint    string
+	GroupKey       string
+	SourceURL      string
+	OccurredAt     time.Time
+	LabelsJSON     []byte
+	MetadataJSON   []byte
+	PayloadVersion int
+	PayloadJSON    []byte
+}
+
+type EventCandidate struct {
+	EventEnvelope
+}
+
 type Event struct {
-	ID            string
-	ReceiptID     string
-	Source        Source
-	IntegrationID string
-	SourceEventID string
-	Type          string
-	Action        string
-	Lifecycle     Lifecycle
-	Severity      Severity
-	Title         string
-	Summary       string
-	Service       string
-	Environment   string
-	Release       string
-	CommitSHA     string
-	Actor         string
-	Fingerprint   string
-	GroupKey      string
-	URL           string
-	OccurredAt    time.Time
-	LabelsJSON    []byte
-	FieldsJSON    []byte
-	CreatedAt     time.Time
+	ID        string
+	ReceiptID string
+	EventEnvelope
+	RouteTraceJSON []byte
+	CreatedAt      time.Time
 }
 
 type Delivery struct {
@@ -160,6 +172,12 @@ type IngestBatch struct {
 	Receipt         Receipt
 	Events          []Event
 	DeliveryByEvent map[string][]Delivery
+}
+
+type RouteTrace struct {
+	RouteMatchCount int      `json:"route_match_count"`
+	RouteIDs        []string `json:"route_ids,omitempty"`
+	DestinationIDs  []string `json:"destination_ids,omitempty"`
 }
 
 type IngestResult struct {
@@ -223,12 +241,6 @@ type RenderedMessage struct {
 	Body        []byte
 }
 
-type Destination struct {
-	ID      string
-	Type    DestinationType
-	Profile string
-}
-
 type ManagedIntegration struct {
 	ID           string
 	Source       Source
@@ -237,52 +249,6 @@ type ManagedIntegration struct {
 	ReplayWindow time.Duration
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
-}
-
-type ManagedDestination struct {
-	ID         string
-	Type       DestinationType
-	WebhookURL string
-	BotToken   string
-	ChatID     string
-	APIBaseURL string
-	Profile    string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-}
-
-type RendererProfile map[string]RendererSourceConfig
-
-type RendererSourceConfig struct {
-	Default   RendererDestinationTemplates            `json:"default"`
-	Overrides map[string]RendererDestinationTemplates `json:"overrides,omitempty"`
-}
-
-type RendererDestinationTemplates struct {
-	Slack    *SlackTemplate    `json:"slack,omitempty"`
-	Telegram *TelegramTemplate `json:"telegram,omitempty"`
-	Email    *EmailTemplate    `json:"email,omitempty"`
-}
-
-type SlackTemplate struct {
-	Title string `json:"title,omitempty"`
-	Body  string `json:"body,omitempty"`
-}
-
-type TelegramTemplate struct {
-	Text string `json:"text,omitempty"`
-}
-
-type EmailTemplate struct {
-	Subject string `json:"subject,omitempty"`
-	Body    string `json:"body,omitempty"`
-}
-
-type ManagedRendererProfile struct {
-	ID        string
-	Profile   RendererProfile
-	CreatedAt time.Time
-	UpdatedAt time.Time
 }
 
 type AttemptResult struct {
@@ -297,30 +263,6 @@ type AttemptResult struct {
 	ProviderMessageID string
 	NextStatus        DeliveryStatus
 	NextAttemptAt     *time.Time
-}
-
-var KnownEventTypes = []string{
-	// watcher events
-	"watcher.version.found",
-	"watcher.deployment.started",
-	"watcher.deployment.succeeded",
-	"watcher.deployment.failed",
-	"watcher.deployment.cancelled",
-	"watcher.deployment.rolled_back",
-	"watcher.rollback.succeeded",
-	"watcher.rollback.failed",
-	"watcher.webhook.test",
-	"webhook.delivery.exhausted",
-	"service.health.changed",
-
-	// github events
-	"github.pull_request.opened",
-	"github.pull_request.merged",
-	"github.pull_request.closed",
-	"github.workflow.succeeded",
-	"github.workflow.failed",
-	"github.workflow.cancelled",
-	"github.release.published",
 }
 
 var KnownSources = []Source{
@@ -380,23 +322,6 @@ func KnownReceiptStatusStrings() []string {
 
 func IsKnownSeverity(value Severity) bool {
 	for _, known := range KnownSeverities {
-		if known == value {
-			return true
-		}
-	}
-	return false
-}
-
-func KnownEventTypeStrings() []string {
-	values := make([]string, 0, len(KnownEventTypes))
-	for _, value := range KnownEventTypes {
-		values = append(values, value)
-	}
-	return values
-}
-
-func IsKnownEventType(value string) bool {
-	for _, known := range KnownEventTypes {
 		if known == value {
 			return true
 		}

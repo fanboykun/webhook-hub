@@ -19,7 +19,7 @@ import (
 )
 
 type Service struct {
-	store        storage.Store
+	store        storage.IngestStore
 	cfg          config.Config
 	adapters     *Registry
 	router       *routing.Engine
@@ -29,7 +29,7 @@ type Service struct {
 	destinations *runtimeconfig.DestinationRegistry
 }
 
-func NewService(store storage.Store, cfg config.Config, adapters *Registry, router *routing.Engine, integrations *runtimeconfig.IntegrationRegistry, destinations *runtimeconfig.DestinationRegistry, clk clock.Clock, logger *slog.Logger) *Service {
+func NewService(store storage.IngestStore, cfg config.Config, adapters *Registry, router *routing.Engine, integrations *runtimeconfig.IntegrationRegistry, destinations *runtimeconfig.DestinationRegistry, clk clock.Clock, logger *slog.Logger) *Service {
 	return &Service{
 		store:        store,
 		cfg:          cfg,
@@ -96,10 +96,13 @@ func (s *Service) Handle(ctx context.Context, source domain.Source, req InboundR
 	}
 
 	totalMatches := 0
-	for _, event := range normalized.Events {
-		event.ID = id.New(now)
-		event.ReceiptID = receiptID
-		event.CreatedAt = now
+	for _, candidate := range normalized.Events {
+		event := domain.Event{
+			ID:            id.New(now),
+			ReceiptID:     receiptID,
+			EventEnvelope: candidate.EventEnvelope,
+			CreatedAt:     now,
+		}
 
 		matches := s.router.Destinations(event)
 		matchedRouteIDs := make([]string, 0, len(matches))
@@ -124,14 +127,12 @@ func (s *Service) Handle(ctx context.Context, source domain.Source, req InboundR
 				UpdatedAt:       now,
 			})
 		}
-		fields := map[string]any{}
-		if len(event.FieldsJSON) > 0 {
-			_ = json.Unmarshal(event.FieldsJSON, &fields)
-		}
-		fields["route_match_count"] = len(matches)
-		fields["route_ids"] = matchedRouteIDs
-		fields["destination_ids"] = matchedDestinationIDs
-		event.FieldsJSON, _ = json.Marshal(fields)
+		traceJSON, _ := json.Marshal(domain.RouteTrace{
+			RouteMatchCount: len(matches),
+			RouteIDs:        matchedRouteIDs,
+			DestinationIDs:  matchedDestinationIDs,
+		})
+		event.RouteTraceJSON = traceJSON
 		totalMatches += len(deliveries)
 		batch.Events = append(batch.Events, event)
 		batch.DeliveryByEvent[event.ID] = deliveries
@@ -139,7 +140,7 @@ func (s *Service) Handle(ctx context.Context, source domain.Source, req InboundR
 		eventFields := []any{
 			"source", event.Source,
 			"event_id", event.ID,
-			"event_type", event.Type,
+			"event_key", event.Key,
 			"severity", event.Severity,
 			"route_match_count", len(matches),
 			"route_ids", matchedRouteIDs,

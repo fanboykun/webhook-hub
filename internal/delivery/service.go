@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 )
 
 type Service struct {
-	store          storage.Store
+	store          storage.DeliveryStore
 	cfg            config.Config
 	clock          clock.Clock
 	logger         *slog.Logger
@@ -27,11 +28,11 @@ type Service struct {
 	destinations   *runtimeconfig.DestinationRegistry
 }
 
-func NewService(store storage.Store, cfg config.Config, destinations *runtimeconfig.DestinationRegistry, profiles *runtimeconfig.RendererProfileRegistry, clk clock.Clock, logger *slog.Logger) *Service {
+func NewService(store storage.DeliveryStore, cfg config.Config, destinations *runtimeconfig.DestinationRegistry, profiles *runtimeconfig.RendererProfileRegistry, clk clock.Clock, logger *slog.Logger) *Service {
 	return NewServiceWithRenderer(store, cfg, destinations, profiles, clk, logger, message.NewConfigurableRenderer(profiles, nil, nil))
 }
 
-func NewServiceWithRenderer(store storage.Store, cfg config.Config, destinations *runtimeconfig.DestinationRegistry, profiles *runtimeconfig.RendererProfileRegistry, clk clock.Clock, logger *slog.Logger, renderer message.Renderer) *Service {
+func NewServiceWithRenderer(store storage.DeliveryStore, cfg config.Config, destinations *runtimeconfig.DestinationRegistry, profiles *runtimeconfig.RendererProfileRegistry, clk clock.Clock, logger *slog.Logger, renderer message.Renderer) *Service {
 	return &Service{
 		store:          store,
 		cfg:            cfg,
@@ -126,6 +127,10 @@ func (s *Service) processEnvelope(ctx context.Context, workerID string, envelope
 			NextStatus:        domain.DeliverySent,
 		})
 		if err != nil {
+			if errors.Is(err, storage.ErrDeliveryLeaseLost) {
+				s.logWarn("delivery.lease_lost", "worker_id", workerID, "delivery_id", envelope.Delivery.ID, "event_id", envelope.Event.ID, "destination_id", envelope.Delivery.DestinationID)
+				return nil
+			}
 			s.logError("delivery.sent_update_failed", "worker_id", workerID, "delivery_id", envelope.Delivery.ID, "event_id", envelope.Event.ID, "destination_id", envelope.Delivery.DestinationID, "error", err)
 			return err
 		}
@@ -173,6 +178,10 @@ func (s *Service) processEnvelope(ctx context.Context, workerID string, envelope
 		NextAttemptAt: nextAttempt,
 	})
 	if err != nil {
+		if errors.Is(err, storage.ErrDeliveryLeaseLost) {
+			s.logWarn("delivery.lease_lost", "worker_id", workerID, "delivery_id", envelope.Delivery.ID, "event_id", envelope.Event.ID, "destination_id", envelope.Delivery.DestinationID)
+			return nil
+		}
 		s.logError("delivery.failure_update_failed", "worker_id", workerID, "delivery_id", envelope.Delivery.ID, "event_id", envelope.Event.ID, "destination_id", envelope.Delivery.DestinationID, "error", err)
 		return err
 	}

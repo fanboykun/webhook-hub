@@ -60,13 +60,13 @@ func matchRoute(match domain.RouteMatchCriteria, event domain.Event) bool {
 	if len(match.Sources) > 0 && !slices.Contains(match.Sources, event.Source) {
 		return false
 	}
-	if len(match.Types) > 0 && !slices.Contains(match.Types, event.Type) {
+	if len(match.Types) > 0 && !slices.Contains(match.Types, event.Key) {
 		return false
 	}
 	if len(match.Severities) > 0 && !slices.Contains(match.Severities, event.Severity) {
 		return false
 	}
-	if len(match.Environments) > 0 && !slices.Contains(match.Environments, event.Environment) {
+	if len(match.Environments) > 0 && !slices.Contains(match.Environments, event.Scope.Environment) {
 		return false
 	}
 	return true

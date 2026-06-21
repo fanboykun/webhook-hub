@@ -16,17 +16,16 @@ func NewRenderer() *Renderer {
 
 func (r *Renderer) Render(_ context.Context, event domain.Event, destination domain.Destination) (domain.RenderedMessage, error) {
 	text := fmt.Sprintf(
-		"<b>%s</b>\n%s\n\nseverity=%s\nenv=%s\nservice=%s\nrelease=%s\nprofile=%s",
+		"<b>%s</b>\n%s\n\nseverity=%s\nenv=%s\nservice=%s\nprofile=%s",
 		escapeHTML(event.Title),
 		escapeHTML(event.Summary),
 		escapeHTML(string(event.Severity)),
-		escapeHTML(event.Environment),
-		escapeHTML(event.Service),
-		escapeHTML(event.Release),
+		escapeHTML(event.Scope.Environment),
+		escapeHTML(event.Scope.Service),
 		escapeHTML(destination.Profile),
 	)
-	if event.URL != "" {
-		text += fmt.Sprintf("\n<a href=\"%s\">Open source event</a>", escapeHTML(event.URL))
+	if event.SourceURL != "" {
+		text += fmt.Sprintf("\n<a href=\"%s\">Open source event</a>", escapeHTML(event.SourceURL))
 	}
 
 	return domain.RenderedMessage{

@@ -50,8 +50,8 @@ func TestVerifyAndNormalizeRelease(t *testing.T) {
 	if len(result.Events) != 1 {
 		t.Fatalf("expected one event, got %+v", result)
 	}
-	if result.Events[0].Type != "github.release.published" {
-		t.Fatalf("unexpected event type: %s", result.Events[0].Type)
+	if result.Events[0].Key != "github.release.published" {
+		t.Fatalf("unexpected event key: %s", result.Events[0].Key)
 	}
 }
 

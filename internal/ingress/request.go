@@ -21,7 +21,7 @@ type InboundRequest struct {
 type AdapterResult struct {
 	SourceDeliveryID string
 	SourceEventType  string
-	Events           []domain.Event
+	Events           []domain.EventCandidate
 	IgnoreReason     string
 }
 

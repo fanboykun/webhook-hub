@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fanboykun/webhook-hub/internal/config"
 	"github.com/fanboykun/webhook-hub/internal/domain"
 	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
 )
@@ -54,20 +53,24 @@ func TestEscapeTelegram(t *testing.T) {
 }
 
 func TestConfigurableRenderer_Resolution(t *testing.T) {
-	profiles := map[string]config.ProfileConfig{
+	profiles := map[string]domain.RendererProfile{
 		"my-profile": {
-			"watcher": config.SourceConfig{
-				Default: config.DestinationTemplates{
-					Slack: &config.SlackTemplateConfig{
-						Title: "Default Title",
-						Body:  "Default Body",
-					},
-				},
-				Overrides: map[string]config.DestinationTemplates{
-					"watcher.deployment.failed": {
-						Slack: &config.SlackTemplateConfig{
+			Bindings: []domain.RendererBinding{
+				{
+					Event: domain.EventRef{Source: domain.SourceWatcher, Key: "watcher.deployment.failed"},
+					Templates: domain.RendererDestinationTemplates{
+						Slack: &domain.SlackTemplate{
 							Title: "Failed Override Title",
 							Body:  "Failed Override Body",
+						},
+					},
+				},
+				{
+					Event: domain.EventRef{Source: domain.SourceWatcher, Key: "watcher.deployment.started"},
+					Templates: domain.RendererDestinationTemplates{
+						Slack: &domain.SlackTemplate{
+							Title: "Default Title",
+							Body:  "Default Body",
 						},
 					},
 				},
@@ -80,7 +83,7 @@ func TestConfigurableRenderer_Resolution(t *testing.T) {
 
 	// 1. Destination with no profile -> fall back
 	destNoProfile := domain.Destination{ID: "d1", Type: domain.DestinationSlack, Profile: ""}
-	evt := domain.Event{Source: domain.SourceWatcher, Type: "watcher.deployment.failed"}
+	evt := domain.Event{EventEnvelope: domain.EventEnvelope{Source: domain.SourceWatcher, Key: "watcher.deployment.failed"}}
 	msg, err := r.Render(ctx, evt, destNoProfile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -99,10 +102,10 @@ func TestConfigurableRenderer_Resolution(t *testing.T) {
 		t.Errorf("expected fallback slack renderer, got: %s", string(msg.Body))
 	}
 
-	// 3. Source doesn't exist in profile -> fall back
+	// 3. Event doesn't exist in profile -> fall back
 	destGoodProfile := domain.Destination{ID: "d3", Type: domain.DestinationSlack, Profile: "my-profile"}
-	evtBadSource := domain.Event{Source: domain.SourceGitHub, Type: "github.pull_request.opened"}
-	msg, err = r.Render(ctx, evtBadSource, destGoodProfile)
+	evtNoBinding := domain.Event{EventEnvelope: domain.EventEnvelope{Source: domain.SourceGitHub, Key: "github.pull_request.opened"}}
+	msg, err = r.Render(ctx, evtNoBinding, destGoodProfile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -111,7 +114,7 @@ func TestConfigurableRenderer_Resolution(t *testing.T) {
 	}
 
 	// 4. Matches default template (e.g. event type has no override)
-	evtDefault := domain.Event{Source: domain.SourceWatcher, Type: "watcher.deployment.started"}
+	evtDefault := domain.Event{EventEnvelope: domain.EventEnvelope{Source: domain.SourceWatcher, Key: "watcher.deployment.started"}}
 	msg, err = r.Render(ctx, evtDefault, destGoodProfile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -121,7 +124,7 @@ func TestConfigurableRenderer_Resolution(t *testing.T) {
 	}
 
 	// 5. Matches override template
-	evtOverride := domain.Event{Source: domain.SourceWatcher, Type: "watcher.deployment.failed"}
+	evtOverride := domain.Event{EventEnvelope: domain.EventEnvelope{Source: domain.SourceWatcher, Key: "watcher.deployment.failed"}}
 	msg, err = r.Render(ctx, evtOverride, destGoodProfile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -132,26 +135,30 @@ func TestConfigurableRenderer_Resolution(t *testing.T) {
 }
 
 func TestGoldenIntegration(t *testing.T) {
-	profiles := map[string]config.ProfileConfig{
+	profiles := map[string]domain.RendererProfile{
 		"templated-profile": {
-			"watcher": config.SourceConfig{
-				Default: config.DestinationTemplates{
-					Slack: &config.SlackTemplateConfig{
-						Title: "[{{.Severity}}] {{.Title}}",
-						Body:  "Service {{.Service}} environment {{.Environment}}",
-					},
-					Telegram: &config.TelegramTemplateConfig{
-						Text: "<b>[{{.Severity}}] {{.Title}}</b>\nService: {{.Service}}",
+			Bindings: []domain.RendererBinding{
+				{
+					Event: domain.EventRef{Source: domain.SourceWatcher, Key: "watcher.deployment.started"},
+					Templates: domain.RendererDestinationTemplates{
+						Slack: &domain.SlackTemplate{
+							Title: "[{{.Severity}}] {{.Title}}",
+							Body:  "Service {{.Service}} environment {{.Environment}}",
+						},
+						Telegram: &domain.TelegramTemplate{
+							Text: "<b>[{{.Severity}}] {{.Title}}</b>\nService: {{.Service}}",
+						},
 					},
 				},
-				Overrides: map[string]config.DestinationTemplates{
-					"watcher.deployment.failed": {
-						Slack: &config.SlackTemplateConfig{
+				{
+					Event: domain.EventRef{Source: domain.SourceWatcher, Key: "watcher.deployment.failed"},
+					Templates: domain.RendererDestinationTemplates{
+						Slack: &domain.SlackTemplate{
 							Title: "CRITICAL ALERT: {{.Title}} failed in {{.Environment}}",
-							Body:  "*Service:* {{.Service}}\n*Release:* {{.Release}}\n*Error/Summary:* {{.Summary}}",
+							Body:  "*Service:* {{.Service}}\n*Release:* {{ index .Metadata \"release\" }}\n*Error/Summary:* {{.Summary}}",
 						},
-						Telegram: &config.TelegramTemplateConfig{
-							Text: "🚨 <b>{{.Title}} ({{.Lifecycle}})</b> 🚨\nEnvironment: <b>{{.Environment}}</b>\nService: <code>{{.Service}}</code>\nRelease: <code>{{.Release}}</code>\nSummary: <i>{{.Summary}}</i>\n<a href=\"{{.URL}}\">View Details</a>",
+						Telegram: &domain.TelegramTemplate{
+							Text: "🚨 <b>{{.Title}} ({{.Lifecycle}})</b> 🚨\nEnvironment: <b>{{.Environment}}</b>\nService: <code>{{.Service}}</code>\nRelease: <code>{{ index .Metadata \"release\" }}</code>\nSummary: <i>{{.Summary}}</i>\n<a href=\"{{.SourceURL}}\">View Details</a>",
 						},
 					},
 				},
@@ -163,20 +170,19 @@ func TestGoldenIntegration(t *testing.T) {
 	ctx := context.Background()
 
 	evt := domain.Event{
-		ID:          "evt_1",
-		Source:      domain.SourceWatcher,
-		Type:        "watcher.deployment.failed",
-		Severity:    domain.SeverityError,
-		Lifecycle:   domain.LifecycleFailed,
-		Title:       "Deployment failed",
-		Summary:     "Deployment of api-prod to v1.4.3 failed during health_check: health check returned 503 <error>",
-		Service:     "api-prod",
-		Environment: "production",
-		Release:     "v1.4.3",
-		CommitSHA:   "abc12345",
-		Actor:       "agent",
-		URL:         "https://watcher.example.com/attempts/302",
-		OccurredAt:  time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC),
+		ID: "evt_1",
+		EventEnvelope: domain.EventEnvelope{
+			Source:       domain.SourceWatcher,
+			Key:          "watcher.deployment.failed",
+			Severity:     domain.SeverityError,
+			Lifecycle:    domain.LifecycleFailed,
+			Title:        "Deployment failed",
+			Summary:      "Deployment of api-prod to v1.4.3 failed during health_check: health check returned 503 <error>",
+			Scope:        domain.EventScope{Service: "api-prod", Environment: "production"},
+			SourceURL:    "https://watcher.example.com/attempts/302",
+			OccurredAt:   time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC),
+			MetadataJSON: []byte(`{"release":"v1.4.3","commit_sha":"abc12345","actor":"agent"}`),
+		},
 	}
 
 	tests := []struct {
