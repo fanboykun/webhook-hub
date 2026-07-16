@@ -91,9 +91,9 @@ func (s *Service) processEnvelope(ctx context.Context, workerID string, envelope
 		})
 	}
 	destination := domain.Destination{
-		ID:      envelope.Delivery.DestinationID,
-		Type:    destinationCfg.Type,
-		Profile: destinationCfg.Profile,
+		ID:               envelope.Delivery.DestinationID,
+		Type:             destinationCfg.Type,
+		RendererProfiles: append([]string(nil), destinationCfg.RendererProfiles...),
 	}
 
 	message, err := s.renderMessage(ctx, envelope.Event, destination)

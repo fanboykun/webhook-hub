@@ -22,7 +22,7 @@ func (r *Renderer) Render(_ context.Context, event domain.Event, destination dom
 		escapeHTML(string(event.Severity)),
 		escapeHTML(event.Scope.Environment),
 		escapeHTML(event.Scope.Service),
-		escapeHTML(destination.Profile),
+		escapeHTML(destination.SelectedProfile),
 	)
 	if event.SourceURL != "" {
 		text += fmt.Sprintf("\n<a href=\"%s\">Open source event</a>", escapeHTML(event.SourceURL))

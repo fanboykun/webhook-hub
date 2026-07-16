@@ -3,7 +3,9 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/fanboykun/webhook-hub/internal/domain"
 )
@@ -15,6 +17,16 @@ func testDatabaseConfig() DatabaseConfig {
 	return DatabaseConfig{
 		Path:             "gateway.db",
 		EncryptionKeyEnv: testEncryptionKeyEnv,
+	}
+}
+
+func testWorkersConfig() WorkersConfig {
+	return WorkersConfig{
+		BatchSize:        1,
+		Concurrency:      1,
+		PollInterval:     time.Second,
+		LeaseDuration:    time.Minute,
+		RecoveryInterval: time.Minute,
 	}
 }
 
@@ -103,6 +115,27 @@ func TestDefaultPathReturnsLocalNameWhenNoConfigExists(t *testing.T) {
 	}
 }
 
+func TestLoadExampleConfig(t *testing.T) {
+	t.Setenv("GATEWAY_ADMIN_TOKEN", "admin-token")
+	t.Setenv(testEncryptionKeyEnv, testEncryptionKeyValue)
+	t.Setenv("WATCHER_WEBHOOK_SECRET", "whsec_c2VjcmV0")
+	t.Setenv("GITHUB_WEBHOOK_SECRET", "github-secret")
+	t.Setenv("SLACK_DEPLOYMENTS_WEBHOOK_URL", "https://example.invalid/slack")
+	t.Setenv("TELEGRAM_ONCALL_BOT_TOKEN", "telegram-token")
+	t.Setenv("TEAMS_ONCALL_WEBHOOK_URL", "https://example.invalid/teams")
+
+	cfg, err := Load(filepath.Join("..", "..", "configs", "config.example.yaml"))
+	if err != nil {
+		t.Fatalf("load example config: %v", err)
+	}
+	if got := cfg.Destinations["slack-deployments"].RendererProfiles; len(got) != 2 {
+		t.Fatalf("expected two event-specific Slack profiles, got %+v", got)
+	}
+	if len(cfg.Routes) != 2 {
+		t.Fatalf("expected two default routes, got %+v", cfg.Routes)
+	}
+}
+
 func TestResolveSecretsRequiresWatcherWhsecPrefix(t *testing.T) {
 	t.Setenv("WATCHER_WEBHOOK_SECRET", "not-prefixed")
 	t.Setenv(testEncryptionKeyEnv, testEncryptionKeyValue)
@@ -110,7 +143,7 @@ func TestResolveSecretsRequiresWatcherWhsecPrefix(t *testing.T) {
 	cfg := Config{
 		Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
 		Database: testDatabaseConfig(),
-		Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+		Workers:  testWorkersConfig(),
 		Retry:    RetryConfig{MaxAttempts: 1},
 		Integrations: map[string]IntegrationConfig{
 			"watcher-production": {
@@ -132,7 +165,7 @@ func TestResolveSecretsAcceptsWatcherWhsecPrefix(t *testing.T) {
 	cfg := Config{
 		Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
 		Database: testDatabaseConfig(),
-		Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+		Workers:  testWorkersConfig(),
 		Retry:    RetryConfig{MaxAttempts: 1},
 		Integrations: map[string]IntegrationConfig{
 			"watcher-production": {
@@ -150,11 +183,19 @@ func TestResolveSecretsAcceptsWatcherWhsecPrefix(t *testing.T) {
 	}
 }
 
+func TestResolveSecretValueRejectsInlineSecrets(t *testing.T) {
+	for _, value := range []string{"https://hooks.example.invalid/secret", "whsec_inline", "123456:token"} {
+		if _, _, err := resolveSecretValue(value); err == nil || !strings.Contains(err.Error(), "environment variable name") {
+			t.Fatalf("resolveSecretValue(%q) error = %v, want env reference error", value, err)
+		}
+	}
+}
+
 func TestValidateAcceptsTelegramGroupChatID(t *testing.T) {
 	cfg := Config{
 		Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
 		Database: testDatabaseConfig(),
-		Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+		Workers:  testWorkersConfig(),
 		Retry:    RetryConfig{MaxAttempts: 1},
 		Destinations: map[string]DestinationConfig{
 			"telegram-group": {
@@ -174,7 +215,7 @@ func TestValidateAcceptsTeamsWebhookDestination(t *testing.T) {
 	cfg := Config{
 		Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
 		Database: testDatabaseConfig(),
-		Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+		Workers:  testWorkersConfig(),
 		Retry:    RetryConfig{MaxAttempts: 1},
 		Destinations: map[string]DestinationConfig{
 			"teams-oncall": {
@@ -189,11 +230,81 @@ func TestValidateAcceptsTeamsWebhookDestination(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsWhitespaceResourceIDs(t *testing.T) {
+	cfg := Config{
+		Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
+		Database: testDatabaseConfig(),
+		Workers:  testWorkersConfig(),
+		Retry:    RetryConfig{MaxAttempts: 1},
+		Integrations: map[string]IntegrationConfig{
+			" watcher-production ": {Source: domain.SourceWatcher},
+		},
+		Destinations: map[string]DestinationConfig{
+			" slack-dest ": {Type: domain.DestinationSlack, WebhookURLEnv: "SLACK_URL"},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "without surrounding whitespace") {
+		t.Fatalf("expected resource id validation error, got %v", err)
+	}
+}
+
+func TestValidateDefaultRoutes(t *testing.T) {
+	base := func() Config {
+		return Config{
+			Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
+			Database: testDatabaseConfig(),
+			Workers:  testWorkersConfig(),
+			Retry:    RetryConfig{MaxAttempts: 1},
+			Destinations: map[string]DestinationConfig{
+				"slack-dest": {Type: domain.DestinationSlack, WebhookURLEnv: "SLACK_URL"},
+			},
+		}
+	}
+
+	tests := []struct {
+		name  string
+		route RouteConfig
+		want  string
+	}{
+		{
+			name: "valid",
+			route: RouteConfig{
+				ID:           "watcher-failed",
+				Match:        RouteMatchConfig{Sources: []domain.Source{domain.SourceWatcher}, Types: []string{"watcher.deployment.failed"}},
+				Destinations: []string{"slack-dest"},
+			},
+		},
+		{name: "unknown destination", route: RouteConfig{ID: "bad-destination", Destinations: []string{"missing"}}, want: "undefined destination"},
+		{name: "unknown event", route: RouteConfig{ID: "bad-event", Match: RouteMatchConfig{Types: []string{"watcher.nope"}}, Destinations: []string{"slack-dest"}}, want: "unknown event type"},
+		{name: "duplicate destination", route: RouteConfig{ID: "duplicate", Destinations: []string{"slack-dest", "slack-dest"}}, want: "repeats destination"},
+		{name: "empty destinations", route: RouteConfig{ID: "empty"}, want: "must not be empty"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := base()
+			cfg.Routes = []RouteConfig{tc.route}
+			err := cfg.Validate()
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("Validate() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() error = %v, want substring %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidateRejectsInvalidTelegramChatID(t *testing.T) {
 	cfg := Config{
 		Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
 		Database: testDatabaseConfig(),
-		Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+		Workers:  testWorkersConfig(),
 		Retry:    RetryConfig{MaxAttempts: 1},
 		Destinations: map[string]DestinationConfig{
 			"telegram-group": {
@@ -220,38 +331,27 @@ func TestValidateRendererProfiles(t *testing.T) {
 			cfg: Config{
 				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
 				Database: testDatabaseConfig(),
-				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+				Workers:  testWorkersConfig(),
 				Retry:    RetryConfig{MaxAttempts: 1},
 				Destinations: map[string]DestinationConfig{
 					"slack-dest": {
-						Type:          domain.DestinationSlack,
-						WebhookURLEnv: "SLACK_URL",
-						Profile:       "detailed",
+						Type:             domain.DestinationSlack,
+						WebhookURLEnv:    "SLACK_URL",
+						RendererProfiles: []string{"watcher-deployment-failed-detailed"},
 					},
 				},
 				RendererProfiles: map[string]ProfileConfig{
-					"detailed": {
-						Bindings: []ProfileBindingConfig{
-							{
-								Event: EventBindingConfig{Source: domain.SourceWatcher, Key: "watcher.deployment.started"},
-								Templates: DestinationTemplates{
-									Slack: &SlackTemplateConfig{
-										Title: "[{{.Severity}}] {{.Title}}",
-										Body:  "{{.Summary}} - {{.OccurredAt.Format \"2006-01-02\"}}",
-									},
-									Teams: &TeamsTemplateConfig{
-										Title: "[{{.Severity}}] {{.Title}}",
-										Body:  "{{.Summary}}",
-									},
-								},
+					"watcher-deployment-failed-detailed": {
+						Source: domain.SourceWatcher,
+						Key:    "watcher.deployment.failed",
+						Templates: DestinationTemplates{
+							Slack: &SlackTemplateConfig{
+								Title: "[{{.Severity}}] {{.Title}}",
+								Body:  "{{.Summary}} - {{.OccurredAt.Format \"2006-01-02\"}} {{.Payload.attempt.target_version}}",
 							},
-							{
-								Event: EventBindingConfig{Source: domain.SourceWatcher, Key: "watcher.deployment.failed"},
-								Templates: DestinationTemplates{
-									Slack: &SlackTemplateConfig{
-										Title: "ALERT: {{.Title}} failed in {{.Environment}}",
-									},
-								},
+							Teams: &TeamsTemplateConfig{
+								Title: "[{{.Severity}}] {{.Title}}",
+								Body:  "{{.Payload.service.name}}",
 							},
 						},
 					},
@@ -264,18 +364,15 @@ func TestValidateRendererProfiles(t *testing.T) {
 			cfg: Config{
 				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
 				Database: testDatabaseConfig(),
-				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+				Workers:  testWorkersConfig(),
 				Retry:    RetryConfig{MaxAttempts: 1},
 				RendererProfiles: map[string]ProfileConfig{
-					"detailed": {
-						Bindings: []ProfileBindingConfig{
-							{
-								Event: EventBindingConfig{Source: domain.SourceWatcher, Key: "watcher.deployment.failed"},
-								Templates: DestinationTemplates{
-									Slack: &SlackTemplateConfig{
-										Title: "[{{.Severity}",
-									},
-								},
+					"watcher-deployment-failed-detailed": {
+						Source: domain.SourceWatcher,
+						Key:    "watcher.deployment.failed",
+						Templates: DestinationTemplates{
+							Slack: &SlackTemplateConfig{
+								Title: "[{{.Severity}",
 							},
 						},
 					},
@@ -288,18 +385,15 @@ func TestValidateRendererProfiles(t *testing.T) {
 			cfg: Config{
 				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
 				Database: testDatabaseConfig(),
-				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+				Workers:  testWorkersConfig(),
 				Retry:    RetryConfig{MaxAttempts: 1},
 				RendererProfiles: map[string]ProfileConfig{
-					"detailed": {
-						Bindings: []ProfileBindingConfig{
-							{
-								Event: EventBindingConfig{Source: domain.SourceWatcher, Key: "watcher.deployment.failed"},
-								Templates: DestinationTemplates{
-									Slack: &SlackTemplateConfig{
-										Title: "[{{.ReceiptID}}]",
-									},
-								},
+					"watcher-deployment-failed-detailed": {
+						Source: domain.SourceWatcher,
+						Key:    "watcher.deployment.failed",
+						Templates: DestinationTemplates{
+							Slack: &SlackTemplateConfig{
+								Title: "[{{.ReceiptID}}]",
 							},
 						},
 					},
@@ -312,35 +406,32 @@ func TestValidateRendererProfiles(t *testing.T) {
 			cfg: Config{
 				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
 				Database: testDatabaseConfig(),
-				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+				Workers:  testWorkersConfig(),
 				Retry:    RetryConfig{MaxAttempts: 1},
 				Destinations: map[string]DestinationConfig{
 					"slack-dest": {
-						Type:          domain.DestinationSlack,
-						WebhookURLEnv: "SLACK_URL",
-						Profile:       "nonexistent",
+						Type:             domain.DestinationSlack,
+						WebhookURLEnv:    "SLACK_URL",
+						RendererProfiles: []string{"nonexistent"},
 					},
 				},
 			},
-			wantErr: false,
+			wantErr: true,
 		},
 		{
-			name: "unknown event type binding",
+			name: "unknown event type is rejected",
 			cfg: Config{
 				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
 				Database: testDatabaseConfig(),
-				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+				Workers:  testWorkersConfig(),
 				Retry:    RetryConfig{MaxAttempts: 1},
 				RendererProfiles: map[string]ProfileConfig{
-					"detailed": {
-						Bindings: []ProfileBindingConfig{
-							{
-								Event: EventBindingConfig{Source: domain.SourceWatcher, Key: "unknown.event.type"},
-								Templates: DestinationTemplates{
-									Slack: &SlackTemplateConfig{
-										Title: "{{.Title}}",
-									},
-								},
+					"watcher-unknown-detailed": {
+						Source: domain.SourceWatcher,
+						Key:    "watcher.invalid.event",
+						Templates: DestinationTemplates{
+							Slack: &SlackTemplateConfig{
+								Title: "{{.Title}}",
 							},
 						},
 					},
@@ -349,22 +440,61 @@ func TestValidateRendererProfiles(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "unknown event type binding variant",
+			name: "metadata access is rejected because it is not typed payload",
 			cfg: Config{
 				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
 				Database: testDatabaseConfig(),
-				Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+				Workers:  testWorkersConfig(),
 				Retry:    RetryConfig{MaxAttempts: 1},
 				RendererProfiles: map[string]ProfileConfig{
-					"detailed": {
-						Bindings: []ProfileBindingConfig{
-							{
-								Event: EventBindingConfig{Source: domain.SourceWatcher, Key: "watcher.invalid.event"},
-								Templates: DestinationTemplates{
-									Slack: &SlackTemplateConfig{
-										Title: "{{.Title}}",
-									},
-								},
+					"watcher-deployment-failed-detailed": {
+						Source: domain.SourceWatcher,
+						Key:    "watcher.deployment.failed",
+						Templates: DestinationTemplates{
+							Slack: &SlackTemplateConfig{
+								Title: `{{ index .Metadata "release" }}`,
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "index payload access is rejected because it bypasses typed paths",
+			cfg: Config{
+				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
+				Database: testDatabaseConfig(),
+				Workers:  testWorkersConfig(),
+				Retry:    RetryConfig{MaxAttempts: 1},
+				RendererProfiles: map[string]ProfileConfig{
+					"watcher-deployment-failed-detailed": {
+						Source: domain.SourceWatcher,
+						Key:    "watcher.deployment.failed",
+						Templates: DestinationTemplates{
+							Slack: &SlackTemplateConfig{
+								Title: `{{ index .Payload "release" }}`,
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "unknown payload path is rejected",
+			cfg: Config{
+				Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
+				Database: testDatabaseConfig(),
+				Workers:  testWorkersConfig(),
+				Retry:    RetryConfig{MaxAttempts: 1},
+				RendererProfiles: map[string]ProfileConfig{
+					"watcher-deployment-failed-detailed": {
+						Source: domain.SourceWatcher,
+						Key:    "watcher.deployment.failed",
+						Templates: DestinationTemplates{
+							Slack: &SlackTemplateConfig{
+								Title: "{{.Payload.release}}",
 							},
 						},
 					},

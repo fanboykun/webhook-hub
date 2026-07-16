@@ -188,7 +188,7 @@ Recommended paths:
 
 ### 7.4 Viper
 
-Viper loads YAML configuration and environment overrides. Configuration is loaded and validated once during startup. Integration credentials, transport settings, and other process-owned configuration remain startup-loaded in version 1. Live route changes are supported through the operational API and persisted in SQLite.
+Viper loads YAML configuration and environment overrides. Configuration is loaded and validated once during startup. Integrations, destinations, renderer profiles, and routes in the file are startup defaults for an empty corresponding SQLite table. Once a table has persisted rows, that database state is authoritative and live changes are made through the operational API.
 
 ### 7.5 `log/slog` with contextual helpers
 
@@ -904,7 +904,7 @@ Do not automatically suppress a Grafana alert merely because a Watcher deploymen
 
 ## 19. Routing Policy Model
 
-Routing is database-backed and additive. Operators manage route records through the operational API, and the in-memory routing engine reloads from persisted route state after each mutation. All matching routes contribute destinations. Duplicated destination IDs are collapsed before delivery rows are inserted.
+Routing is database-backed and additive. Typed route entries in file configuration seed an empty route table during startup; they do not overwrite existing operator-managed rows. Operators manage persisted route records through the operational API, and the in-memory routing engine reloads a fully validated snapshot after bootstrap and each mutation. All matching routes contribute destinations. Duplicated destination IDs are collapsed before delivery rows are inserted.
 
 Matching semantics:
 
@@ -981,11 +981,11 @@ const (
 )
 
 type Destination struct {
-    ID       string
-    Type     DestinationType
-    Enabled  bool
-    Profile  string
-    Config   map[string]any
+    ID               string
+    Type             DestinationType
+    Enabled          bool
+    RendererProfiles []string
+    Config           map[string]any
 }
 ```
 
@@ -997,7 +997,9 @@ Destination configuration is decoded into provider-specific typed configuration 
 slack-deployments:
   type: slack
   webhook_url_env: SLACK_DEPLOYMENTS_WEBHOOK_URL
-  profile: detailed
+  renderer_profiles:
+    - watcher-deployment-failed-detailed
+    - github-workflow-failed-detailed
 ```
 
 An incoming webhook URL is channel-specific. Create separate named destinations for separate Slack channels.
@@ -1009,7 +1011,9 @@ telegram-bot:
   type: telegram
   bot_token_env: TELEGRAM_ONCALL_BOT_TOKEN
   chat_id: "-100123456789"
-  profile: compact
+  renderer_profiles:
+    - watcher-deployment-failed-compact
+    - github-workflow-failed-compact
 ```
 
 ### Microsoft Teams destination
@@ -1018,7 +1022,9 @@ telegram-bot:
 teams-oncall:
   type: teams
   webhook_url_env: TEAMS_ONCALL_WEBHOOK_URL
-  profile: detailed
+  renderer_profiles:
+    - watcher-deployment-failed-detailed
+    - github-workflow-failed-detailed
 ```
 
 Teams destinations use operator-owned incoming webhook URLs. The gateway renders MessageCard-compatible JSON and classifies HTTP 429 and 5xx responses as retryable.
@@ -1033,7 +1039,8 @@ email-operations:
   to:
     - ops@example.com
     - oncall@example.com
-  profile: detailed
+  renderer_profiles:
+    - watcher-deployment-failed-detailed
 ```
 
 Recipient groups may be introduced if recipient lists are repeated across destinations.
@@ -1062,7 +1069,9 @@ type Renderer interface {
 }
 ```
 
-Version 1 keeps the built-in code-defined renderers as the durability baseline, and may layer optional profile-driven templates on top. Renderer profiles are dynamically managed through the operational API, persisted in SQLite, seeded once from file config when the table is empty, and hot-reloaded into the live delivery renderer registry. Profiles now bind templates directly to normalized event types instead of using source-level defaults with ad hoc overrides, because each event type owns a distinct payload contract. Template configuration is validated when present, but destinations must still fall back to the built-in renderer if no matching profile binding exists so delivery does not fail solely because renderer configuration has not been created yet.
+Version 1 keeps the built-in code-defined renderers as the durability baseline, and layers optional profile-driven templates on top. Renderer profiles are dynamically managed through the operational API, persisted in SQLite, seeded transactionally from file config when the corresponding table is empty, and hot-reloaded into the live delivery renderer registry. Each uniquely named profile targets exactly one normalized source/event contract because each event type owns a distinct payload shape. A destination may select several profiles, but no two may target the same source/event and every selected profile must provide a template for that destination type.
+
+Templates are compiled once when configuration is validated or reloaded. The compiler permits only declared scalar payload paths and a small normalized envelope field set; whole-context access, metadata lookup, functions, variables, ranges, `with`, associated templates, unknown fields, and direct object rendering are rejected. Normalized payload versions, required fields, field types, and unknown fields are enforced before persistence. Provider-controlled values are escaped recursively before execution, and rendered outputs are checked against provider size limits. Unknown profile references are configuration errors. An event that matches none of a destination's valid profiles uses the built-in renderer.
 
 ### Slack
 
@@ -1504,18 +1513,24 @@ destinations:
   slack-operations:
     type: slack
     webhook_url_env: SLACK_OPERATIONS_WEBHOOK_URL
-    profile: detailed
+    renderer_profiles:
+      - watcher-deployment-failed-detailed
+      - github-workflow-failed-detailed
 
   slack-deployments:
     type: slack
     webhook_url_env: SLACK_DEPLOYMENTS_WEBHOOK_URL
-    profile: detailed
+    renderer_profiles:
+      - watcher-deployment-failed-detailed
+      - github-workflow-failed-detailed
 
   telegram-bot:
     type: telegram
     bot_token_env: TELEGRAM_ONCALL_BOT_TOKEN
     chat_id: "-100123456789"
-    profile: compact
+    renderer_profiles:
+      - watcher-deployment-failed-compact
+      - github-workflow-failed-compact
 
   email-operations:
     type: email
@@ -1524,7 +1539,8 @@ destinations:
     to:
       - ops@example.com
       - oncall@example.com
-    profile: detailed
+    renderer_profiles:
+      - watcher-deployment-failed-detailed
 ```
 
 ### Configuration validation
@@ -1541,7 +1557,7 @@ Startup must fail when:
 - Worker, retry, or timeout values are out of bounds.
 - SQLite path is empty or its parent directory cannot be created.
 
-Viper is an input mechanism. After loading, unmarshal into typed configuration structs, resolve secret references, validate, and pass an immutable config object to the application. Route validation happens in the route CRUD service because routes are no longer startup-loaded config.
+Viper is an input mechanism. After loading, unmarshal into typed configuration structs, resolve secret references, validate, and pass an immutable config object to the application. Startup route defaults and API-managed routes use the same source, event, severity, environment, and destination-reference rules. Persisted routes are validated again as a complete snapshot before the routing engine is replaced.
 
 ---
 
@@ -1921,8 +1937,8 @@ func main() {
 
     ingestService := ingress.NewService(store, adapters, routeEngine, clock.Real{}, logger)
     appService := app.NewService(cfg, clock.Real{}, store, ingestService, routeEngine)
-    if err := appService.LoadRoutes(ctx); err != nil {
-        logger.Error("routes.load_failed", "error", err)
+    if err := appService.BootstrapDynamicConfig(ctx); err != nil {
+        logger.Error("dynamic_config.bootstrap_failed", "error", err)
         os.Exit(1)
     }
     deliveryService := delivery.NewService(store, destinations, renderers, senders, cfg.Workers, cfg.Retry, clock.Real{}, logger)
@@ -2239,7 +2255,7 @@ Chosen because no atomic transaction spans SQLite and external providers. The sy
 
 ### ADR-008: Dynamic Integrations and Destinations with SQLite Encryption
 
-Supercedes ADR-004. Chosen to allow operators to configure webhook integration endpoints (Watcher, GitHub, Grafana, Sentry) and delivery destinations (Slack, Telegram, Email) dynamically via REST API endpoints without restarting the gateway process. Provider secrets, such as Slack webhooks and Telegram bot tokens, are encrypted in SQLite using AES-256-GCM. The config schema carries an env-var reference for the master encryption key, and that referenced value is required at startup because file-configured integrations/destinations are seed input for the encrypted SQLite-backed dynamic configuration model. Hot-reloaded in-memory registries cache the configurations to keep webhook ingestion and background delivery performance high and avoid continuous SQLite lookups.
+Supercedes ADR-004. Chosen to allow operators to configure webhook integration endpoints and delivery destinations dynamically through REST API endpoints without restarting the gateway process. Provider secrets, such as Slack webhooks and Telegram bot tokens, are encrypted in SQLite using AES-256-GCM. File-configured integrations, destinations, renderer profiles, and routes are typed seed input for empty corresponding tables; non-empty persisted tables remain authoritative on restart. Hot-reloaded in-memory registries and the routing engine cache validated snapshots to keep webhook ingestion and background delivery performance high and avoid continuous SQLite lookups.
 
 ---
 

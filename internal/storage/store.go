@@ -21,6 +21,7 @@ type DeliveryStore interface {
 }
 
 type AdminStore interface {
+	SeedDynamicConfig(ctx context.Context, integrations []domain.ManagedIntegration, destinations []domain.ManagedDestination, profiles []domain.ManagedRendererProfile, routes []domain.Route) error
 	ListIntegrations(ctx context.Context) ([]domain.ManagedIntegration, error)
 	GetIntegration(ctx context.Context, id string) (domain.ManagedIntegration, error)
 	CreateIntegration(ctx context.Context, integration domain.ManagedIntegration) error
@@ -31,6 +32,7 @@ type AdminStore interface {
 	CreateDestination(ctx context.Context, destination domain.ManagedDestination) error
 	UpdateDestination(ctx context.Context, destination domain.ManagedDestination) error
 	DeleteDestination(ctx context.Context, id string) error
+	HasActiveDeliveriesForDestination(ctx context.Context, id string) (bool, error)
 	ListRendererProfiles(ctx context.Context) ([]domain.ManagedRendererProfile, error)
 	GetRendererProfile(ctx context.Context, id string) (domain.ManagedRendererProfile, error)
 	CreateRendererProfile(ctx context.Context, profile domain.ManagedRendererProfile) error

@@ -55,58 +55,83 @@ destinations:
   slack-deployments:
     type: slack
     webhook_url_env: SLACK_DEPLOYMENTS_WEBHOOK_URL
-    profile: detailed
+    renderer_profiles:
+      - watcher-deployment-failed-detailed
+      - github-workflow-failed-detailed
 
   telegram-bot:
     type: telegram
     bot_token_env: TELEGRAM_ONCALL_BOT_TOKEN
     chat_id: "-100123456789"
-    profile: compact
+    renderer_profiles:
+      - watcher-deployment-failed-compact
+      - github-workflow-failed-compact
 
   teams-oncall:
     type: teams
     webhook_url_env: TEAMS_ONCALL_WEBHOOK_URL
-    profile: detailed
+    renderer_profiles:
+      - watcher-deployment-failed-detailed
+      - github-workflow-failed-detailed
 
 renderer_profiles:
-  detailed:
-    bindings:
-      - event:
-          source: watcher
-          key: watcher.deployment.failed
-        templates:
-          slack:
-            title: "[{{.Severity}}] {{.Title}}"
-            body: "*Service:* {{.Service}}\n*Environment:* {{.Environment}}\n*Release:* {{ index .Metadata \"release\" }}\n*Summary:* {{.Summary}}"
-          telegram:
-            text: "<b>[{{.Severity}}] {{.Title}}</b>\nService: <code>{{.Service}}</code>\nEnvironment: <b>{{.Environment}}</b>\nRelease: <code>{{ index .Metadata \"release\" }}</code>\nSummary: <i>{{.Summary}}</i>"
-          teams:
-            title: "[{{.Severity}}] {{.Title}}"
-            body: "**Service:** {{.Service}}\n\n**Environment:** {{.Environment}}\n\n**Release:** {{ index .Metadata \"release\" }}\n\n{{.Summary}}"
-      - event:
-          source: github
-          key: github.workflow.failed
-        templates:
-          slack:
-            title: "[{{.Severity}}] {{.Title}}"
-            body: "*Actor:* {{ index .Metadata \"actor\" }}\n*Summary:* {{.Summary}}\n*URL:* {{.SourceURL}}"
-          telegram:
-            text: "<b>[{{.Severity}}] {{.Title}}</b>\nActor: <code>{{ index .Metadata \"actor\" }}</code>\nSummary: <i>{{.Summary}}</i>\n<a href=\"{{.SourceURL}}\">Open event</a>"
-          teams:
-            title: "[{{.Severity}}] {{.Title}}"
-            body: "**Actor:** {{ index .Metadata \"actor\" }}\n\n{{.Summary}}\n\n[Open event]({{.SourceURL}})"
+  watcher-deployment-failed-detailed:
+    source: watcher
+    key: watcher.deployment.failed
+    templates:
+      slack:
+        title: "[{{.Severity}}] {{.Title}}"
+        body: "*Service:* {{.Payload.service.name}}\n*Environment:* {{.Environment}}\n*Release:* {{.Payload.attempt.target_version}}\n*Summary:* {{.Summary}}"
+      telegram:
+        text: "<b>[{{.Severity}}] {{.Title}}</b>\nService: <code>{{.Payload.service.name}}</code>\nEnvironment: <b>{{.Environment}}</b>\nRelease: <code>{{.Payload.attempt.target_version}}</code>\nSummary: <i>{{.Summary}}</i>"
+      teams:
+        title: "[{{.Severity}}] {{.Title}}"
+        body: "**Service:** {{.Payload.service.name}}\n\n**Environment:** {{.Environment}}\n\n**Release:** {{.Payload.attempt.target_version}}\n\n{{.Summary}}"
 
-  compact:
-    bindings:
-      - event:
-          source: watcher
-          key: watcher.deployment.failed
-        templates:
-          telegram:
-            text: "<b>{{.Title}}</b>\n{{.Summary}}"
-      - event:
-          source: github
-          key: github.workflow.failed
-        templates:
-          telegram:
-            text: "<b>{{.Title}}</b>\n{{.Summary}}"
+  github-workflow-failed-detailed:
+    source: github
+    key: github.workflow.failed
+    templates:
+      slack:
+        title: "[{{.Severity}}] {{.Title}}"
+        body: "*Actor:* {{.Payload.sender.login}}\n*Workflow:* {{.Payload.workflow_run.name}}\n*Summary:* {{.Summary}}\n*URL:* {{.Payload.workflow_run.html_url}}"
+      telegram:
+        text: "<b>[{{.Severity}}] {{.Title}}</b>\nActor: <code>{{.Payload.sender.login}}</code>\nWorkflow: <code>{{.Payload.workflow_run.name}}</code>\nSummary: <i>{{.Summary}}</i>\n<a href=\"{{.Payload.workflow_run.html_url}}\">Open event</a>"
+      teams:
+        title: "[{{.Severity}}] {{.Title}}"
+        body: "**Actor:** {{.Payload.sender.login}}\n\n**Workflow:** {{.Payload.workflow_run.name}}\n\n{{.Summary}}\n\n[Open event]({{.Payload.workflow_run.html_url}})"
+
+  watcher-deployment-failed-compact:
+    source: watcher
+    key: watcher.deployment.failed
+    templates:
+      telegram:
+        text: "<b>{{.Title}}</b>\n{{.Summary}}"
+
+  github-workflow-failed-compact:
+    source: github
+    key: github.workflow.failed
+    templates:
+      telegram:
+        text: "<b>{{.Title}}</b>\n{{.Summary}}"
+
+routes:
+  - id: watcher-deployment-failed
+    description: Send failed Watcher deployments to configured channels
+    match:
+      sources: [watcher]
+      types: [watcher.deployment.failed]
+    destinations:
+      - slack-deployments
+      - telegram-bot
+      - teams-oncall
+
+  - id: github-workflow-failed
+    description: Send failed GitHub workflows to configured channels
+    match:
+      sources: [github]
+      types: [github.workflow.failed]
+    destinations:
+      - slack-deployments
+      - telegram-bot
+      - teams-oncall

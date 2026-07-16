@@ -9,9 +9,12 @@ import (
 
 	"github.com/fanboykun/webhook-hub/internal/clock"
 	"github.com/fanboykun/webhook-hub/internal/config"
+	configcrypto "github.com/fanboykun/webhook-hub/internal/config/crypto"
 	"github.com/fanboykun/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/observability"
 	"github.com/fanboykun/webhook-hub/internal/routing"
 	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
+	"github.com/fanboykun/webhook-hub/internal/storage/sqlite"
 )
 
 func TestCreateRouteNormalizesBlankSelectorValues(t *testing.T) {
@@ -85,11 +88,26 @@ func TestCreateRouteRejectsDestinationMissingFromDynamicRegistry(t *testing.T) {
 	}
 }
 
+func TestDeleteDestinationRejectsActiveDeliveries(t *testing.T) {
+	store := &activeDeliveryStoreStub{seedStoreStub: seedStoreStub{
+		destinations: []domain.ManagedDestination{{ID: "slack-deployments", Type: domain.DestinationSlack, WebhookURL: "https://example.invalid"}},
+	}}
+	svc := NewService(config.Config{}, clock.Real{}, store, nil, routing.New(nil), runtimeconfig.NewIntegrationRegistry(nil), runtimeconfig.NewDestinationRegistry(map[string]config.DestinationConfig{
+		"slack-deployments": {Type: domain.DestinationSlack, ResolvedURL: "https://example.invalid"},
+	}), runtimeconfig.NewRendererProfileRegistry(nil))
+
+	err := svc.DeleteDestination(context.Background(), "slack-deployments")
+	if !errors.Is(err, ErrDestinationInUse) {
+		t.Fatalf("expected destination in use error, got %v", err)
+	}
+}
+
 func TestBootstrapDynamicConfigSeedsAndReloadsRegistries(t *testing.T) {
 	store := &seedStoreStub{}
 	integrations := runtimeconfig.NewIntegrationRegistry(nil)
 	destinations := runtimeconfig.NewDestinationRegistry(nil)
 	profiles := runtimeconfig.NewRendererProfileRegistry(nil)
+	router := routing.New(nil)
 	svc := NewService(config.Config{
 		Integrations: map[string]config.IntegrationConfig{
 			"github-main": {
@@ -104,24 +122,23 @@ func TestBootstrapDynamicConfigSeedsAndReloadsRegistries(t *testing.T) {
 			},
 		},
 		RendererProfiles: map[string]config.ProfileConfig{
-			"detailed": {
-				Bindings: []config.ProfileBindingConfig{
-					{
-						Event: config.EventBindingConfig{
-							Source: domain.SourceWatcher,
-							Key:    "watcher.deployment.failed",
-						},
-						Templates: config.DestinationTemplates{
-							Slack: &config.SlackTemplateConfig{
-								Title: "{{.Title}}",
-								Body:  "{{.Summary}}",
-							},
-						},
+			"watcher-deployment-failed-detailed": {
+				Source: domain.SourceWatcher,
+				Key:    "watcher.deployment.failed",
+				Templates: config.DestinationTemplates{
+					Slack: &config.SlackTemplateConfig{
+						Title: "{{.Title}}",
+						Body:  "{{.Summary}}",
 					},
 				},
 			},
 		},
-	}, clock.Real{}, store, nil, routing.New(nil), integrations, destinations, profiles)
+		Routes: []config.RouteConfig{{
+			ID:           "watcher-failed",
+			Match:        config.RouteMatchConfig{Types: []string{"watcher.deployment.failed"}},
+			Destinations: []string{"slack-deployments"},
+		}},
+	}, clock.Real{}, store, nil, router, integrations, destinations, profiles)
 
 	if err := svc.BootstrapDynamicConfig(context.Background()); err != nil {
 		t.Fatalf("bootstrap failed: %v", err)
@@ -133,8 +150,201 @@ func TestBootstrapDynamicConfigSeedsAndReloadsRegistries(t *testing.T) {
 	if _, ok := destinations.Get("slack-deployments"); !ok {
 		t.Fatal("expected destination registry to be seeded")
 	}
-	if _, ok := profiles.Get("detailed"); !ok {
+	if _, ok := profiles.Get("watcher-deployment-failed-detailed"); !ok {
 		t.Fatal("expected renderer profile registry to be seeded")
+	}
+	if routes := router.Snapshot(); len(routes) != 1 || routes[0].ID != "watcher-failed" {
+		t.Fatalf("expected route engine to be seeded, got %+v", routes)
+	}
+}
+
+func TestBootstrapDynamicConfigSeedsFreshSQLiteAndPreservesExistingState(t *testing.T) {
+	cipher, err := configcrypto.NewFromString("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+	if err != nil {
+		t.Fatalf("create config cipher: %v", err)
+	}
+	cfg := config.Config{
+		Logging: config.LoggingConfig{Format: "text"},
+		Database: config.DatabaseConfig{
+			Path:               t.TempDir() + "/gateway.db",
+			BusyTimeout:        time.Second,
+			MaxOpenConnections: 1,
+		},
+		Integrations: map[string]config.IntegrationConfig{
+			"github-main": {Source: domain.SourceGitHub, ResolvedSecret: "github-secret"},
+		},
+		Destinations: map[string]config.DestinationConfig{
+			"slack-deployments": {
+				Type:             domain.DestinationSlack,
+				ResolvedURL:      "https://example.invalid/slack",
+				RendererProfiles: []string{"watcher-failed"},
+			},
+		},
+		RendererProfiles: map[string]config.ProfileConfig{
+			"watcher-failed": {
+				Source: domain.SourceWatcher,
+				Key:    "watcher.deployment.failed",
+				Templates: config.DestinationTemplates{
+					Slack: &config.SlackTemplateConfig{Title: "{{.Title}}", Body: "{{.Summary}}"},
+				},
+			},
+		},
+		Routes: []config.RouteConfig{{
+			ID:           "watcher-failed",
+			Description:  "default description",
+			Match:        config.RouteMatchConfig{Types: []string{"watcher.deployment.failed"}},
+			Destinations: []string{"slack-deployments"},
+		}},
+	}
+	store, err := sqlite.OpenWithCipher(cfg.Database, observability.NewLogger(cfg.Logging), cipher)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	integrations := runtimeconfig.NewIntegrationRegistry(nil)
+	destinations := runtimeconfig.NewDestinationRegistry(nil)
+	profiles := runtimeconfig.NewRendererProfileRegistry(nil)
+	router := routing.New(nil)
+	svc := NewService(cfg, clock.Real{}, store, nil, router, integrations, destinations, profiles)
+	if err := svc.BootstrapDynamicConfig(context.Background()); err != nil {
+		t.Fatalf("bootstrap fresh sqlite: %v", err)
+	}
+
+	storedIntegrations, err := store.ListIntegrations(context.Background())
+	if err != nil {
+		t.Fatalf("list seeded integrations: %v", err)
+	}
+	storedDestinations, err := store.ListDestinations(context.Background())
+	if err != nil {
+		t.Fatalf("list seeded destinations: %v", err)
+	}
+	storedProfiles, err := store.ListRendererProfiles(context.Background())
+	if err != nil {
+		t.Fatalf("list seeded renderer profiles: %v", err)
+	}
+	storedRoutes, err := store.ListRoutes(context.Background())
+	if err != nil {
+		t.Fatalf("list seeded routes: %v", err)
+	}
+	if len(storedIntegrations) != 1 || len(storedDestinations) != 1 || len(storedProfiles) != 1 || len(storedRoutes) != 1 {
+		t.Fatalf("expected all defaults to be seeded, got integrations=%d destinations=%d profiles=%d routes=%d", len(storedIntegrations), len(storedDestinations), len(storedProfiles), len(storedRoutes))
+	}
+	if _, ok := integrations.Get("github-main"); !ok {
+		t.Fatal("expected seeded integration in live registry")
+	}
+	if _, ok := destinations.Get("slack-deployments"); !ok {
+		t.Fatal("expected seeded destination in live registry")
+	}
+	if _, ok := profiles.Get("watcher-failed"); !ok {
+		t.Fatal("expected seeded profile in live registry")
+	}
+	if got := router.Snapshot(); len(got) != 1 || got[0].ID != "watcher-failed" {
+		t.Fatalf("expected seeded route in live engine, got %+v", got)
+	}
+
+	storedRoutes[0].Description = "operator-managed description"
+	storedRoutes[0].UpdatedAt = time.Now().UTC()
+	if err := store.UpdateRoute(context.Background(), storedRoutes[0]); err != nil {
+		t.Fatalf("update persisted route: %v", err)
+	}
+	if err := svc.BootstrapDynamicConfig(context.Background()); err != nil {
+		t.Fatalf("bootstrap existing sqlite: %v", err)
+	}
+	if got := router.Snapshot(); len(got) != 1 || got[0].Description != "operator-managed description" {
+		t.Fatalf("expected existing route state to be preserved, got %+v", got)
+	}
+}
+
+func TestBootstrapDynamicConfigRejectsInvalidPersistedRouteBeforePublication(t *testing.T) {
+	store := &seedStoreStub{
+		destinations: []domain.ManagedDestination{{
+			ID:         "slack-deployments",
+			Type:       domain.DestinationSlack,
+			WebhookURL: "https://example.invalid/slack",
+		}},
+		routes: []domain.Route{{
+			ID:           "broken-route",
+			Destinations: []string{"missing-destination"},
+		}},
+	}
+	existing := domain.Route{ID: "existing-route", Destinations: []string{"slack-deployments"}}
+	router := routing.New([]domain.Route{existing})
+	svc := NewService(
+		config.Config{},
+		clock.Real{},
+		store,
+		nil,
+		router,
+		runtimeconfig.NewIntegrationRegistry(nil),
+		runtimeconfig.NewDestinationRegistry(nil),
+		runtimeconfig.NewRendererProfileRegistry(nil),
+	)
+
+	err := svc.BootstrapDynamicConfig(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "persisted route \"broken-route\" is invalid") {
+		t.Fatalf("expected invalid persisted route error, got %v", err)
+	}
+	if got := router.Snapshot(); len(got) != 1 || got[0].ID != existing.ID {
+		t.Fatalf("expected existing route snapshot to remain published, got %+v", got)
+	}
+}
+
+func TestBootstrapDynamicConfigRejectsIncompatibleDefaultsBeforeSeeding(t *testing.T) {
+	cipher, err := configcrypto.NewFromString("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+	if err != nil {
+		t.Fatalf("create config cipher: %v", err)
+	}
+	cfg := config.Config{
+		Logging: config.LoggingConfig{Format: "text"},
+		Database: config.DatabaseConfig{
+			Path:               t.TempDir() + "/gateway.db",
+			BusyTimeout:        time.Second,
+			MaxOpenConnections: 1,
+		},
+		Destinations: map[string]config.DestinationConfig{
+			"slack-default": {Type: domain.DestinationSlack, ResolvedURL: "https://example.invalid/default"},
+		},
+		Routes: []config.RouteConfig{{
+			ID:           "default-route",
+			Destinations: []string{"slack-default"},
+		}},
+	}
+	store, err := sqlite.OpenWithCipher(cfg.Database, observability.NewLogger(cfg.Logging), cipher)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.CreateDestination(context.Background(), domain.ManagedDestination{
+		ID:         "slack-operator",
+		Type:       domain.DestinationSlack,
+		WebhookURL: "https://example.invalid/operator",
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create operator destination: %v", err)
+	}
+
+	svc := NewService(
+		cfg,
+		clock.Real{},
+		store,
+		nil,
+		routing.New(nil),
+		runtimeconfig.NewIntegrationRegistry(nil),
+		runtimeconfig.NewDestinationRegistry(nil),
+		runtimeconfig.NewRendererProfileRegistry(nil),
+	)
+	err = svc.BootstrapDynamicConfig(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "route references unknown destination slack-default") {
+		t.Fatalf("expected incompatible startup defaults error, got %v", err)
+	}
+	routes, err := store.ListRoutes(context.Background())
+	if err != nil {
+		t.Fatalf("list routes after rejected seed: %v", err)
+	}
+	if len(routes) != 0 {
+		t.Fatalf("expected invalid defaults not to be seeded, got %+v", routes)
 	}
 }
 
@@ -182,6 +392,12 @@ func newTestService() *Service {
 
 type routeStoreStub struct{}
 
+func (routeStoreStub) SeedDynamicConfig(context.Context, []domain.ManagedIntegration, []domain.ManagedDestination, []domain.ManagedRendererProfile, []domain.Route) error {
+	return nil
+}
+func (routeStoreStub) HasActiveDeliveriesForDestination(context.Context, string) (bool, error) {
+	return false, nil
+}
 func (routeStoreStub) ListIntegrations(context.Context) ([]domain.ManagedIntegration, error) {
 	return nil, nil
 }
@@ -249,12 +465,41 @@ type seedStoreStub struct {
 	integrations []domain.ManagedIntegration
 	destinations []domain.ManagedDestination
 	profiles     []domain.ManagedRendererProfile
+	routes       []domain.Route
+}
+
+type activeDeliveryStoreStub struct {
+	seedStoreStub
+}
+
+func (*activeDeliveryStoreStub) HasActiveDeliveriesForDestination(context.Context, string) (bool, error) {
+	return true, nil
 }
 
 type reloadFailingRouteStoreStub struct {
 	routeStoreStub
 	createCalled  bool
 	listRoutesErr error
+}
+
+func (s *seedStoreStub) SeedDynamicConfig(_ context.Context, integrations []domain.ManagedIntegration, destinations []domain.ManagedDestination, profiles []domain.ManagedRendererProfile, routes []domain.Route) error {
+	if len(s.integrations) == 0 {
+		s.integrations = append([]domain.ManagedIntegration(nil), integrations...)
+	}
+	if len(s.destinations) == 0 {
+		s.destinations = append([]domain.ManagedDestination(nil), destinations...)
+	}
+	if len(s.profiles) == 0 {
+		s.profiles = append([]domain.ManagedRendererProfile(nil), profiles...)
+	}
+	if len(s.routes) == 0 {
+		s.routes = append([]domain.Route(nil), routes...)
+	}
+	return nil
+}
+
+func (s *seedStoreStub) ListRoutes(context.Context) ([]domain.Route, error) {
+	return append([]domain.Route(nil), s.routes...), nil
 }
 
 func (s *reloadFailingRouteStoreStub) CreateRoute(_ context.Context, route domain.Route) error {

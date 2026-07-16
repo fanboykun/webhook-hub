@@ -2,9 +2,7 @@ package httpserver
 
 import (
 	"encoding/json"
-	"fmt"
 	"reflect"
-	"sort"
 	"strings"
 	"time"
 
@@ -268,15 +266,15 @@ func (integrationRequestModel) Schema(r huma.Registry) *huma.Schema {
 }
 
 type destinationConfigModel struct {
-	ID         string               `json:"id" doc:"Stable operator-defined destination identifier. Routes reference this slug and delivery records persist it." example:"slack-deployments"`
-	Type       routeDestinationType `json:"type" doc:"Concrete sender type used to deliver messages."`
-	WebhookURL string               `json:"webhook_url,omitempty" doc:"Redacted Slack incoming webhook URL. Send the real value only on create or update." example:"[REDACTED]"`
-	BotToken   string               `json:"bot_token,omitempty" doc:"Redacted Telegram bot token. Send the real value only on create or update." example:"[REDACTED]"`
-	ChatID     string               `json:"chat_id,omitempty" doc:"Telegram chat identifier or channel username that receives rendered messages." example:"-1004353814221"`
-	APIBaseURL string               `json:"api_base_url,omitempty" doc:"Optional Telegram Bot API base URL override for self-hosted or proxied deployments." example:"https://api.telegram.org"`
-	Profile    string               `json:"profile,omitempty" doc:"Optional renderer profile slug applied when this destination renders outgoing messages." example:"compact"`
-	CreatedAt  time.Time            `json:"created_at,omitempty" doc:"When the managed destination was created."`
-	UpdatedAt  time.Time            `json:"updated_at,omitempty" doc:"When the managed destination was last updated."`
+	ID               string               `json:"id" doc:"Stable operator-defined destination identifier. Routes reference this slug and delivery records persist it." example:"slack-deployments"`
+	Type             routeDestinationType `json:"type" doc:"Concrete sender type used to deliver messages."`
+	WebhookURL       string               `json:"webhook_url,omitempty" doc:"Redacted Slack incoming webhook URL. Send the real value only on create or update." example:"[REDACTED]"`
+	BotToken         string               `json:"bot_token,omitempty" doc:"Redacted Telegram bot token. Send the real value only on create or update." example:"[REDACTED]"`
+	ChatID           string               `json:"chat_id,omitempty" doc:"Telegram chat identifier or channel username that receives rendered messages." example:"-1004353814221"`
+	APIBaseURL       string               `json:"api_base_url,omitempty" doc:"Optional Telegram Bot API base URL override for self-hosted or proxied deployments." example:"https://api.telegram.org"`
+	RendererProfiles []string             `json:"renderer_profiles,omitempty" doc:"Renderer profile slugs selected by this destination. At most one profile may target each source and event pair."`
+	CreatedAt        time.Time            `json:"created_at,omitempty" doc:"When the managed destination was created."`
+	UpdatedAt        time.Time            `json:"updated_at,omitempty" doc:"When the managed destination was last updated."`
 }
 
 func (destinationConfigModel) Schema(r huma.Registry) *huma.Schema {
@@ -292,13 +290,13 @@ func (destinationConfigModel) Schema(r huma.Registry) *huma.Schema {
 }
 
 type destinationRequestModel struct {
-	ID         string               `json:"id" doc:"Stable operator-defined destination identifier. Choose a slug that routes and operators will reference." example:"telegram-bot"`
-	Type       routeDestinationType `json:"type" doc:"Destination sender type to configure."`
-	WebhookURL string               `json:"webhook_url,omitempty" doc:"Slack incoming webhook URL used for outgoing sends." example:"https://hooks.slack.com/services/T000/B000/XXXX"`
-	BotToken   string               `json:"bot_token,omitempty" doc:"Telegram bot token used for outgoing sends." example:"123456:telegram-bot-token"`
-	ChatID     string               `json:"chat_id,omitempty" doc:"Telegram chat identifier or channel username that receives rendered messages." example:"-1004353814221"`
-	APIBaseURL string               `json:"api_base_url,omitempty" doc:"Optional Telegram Bot API base URL override for self-hosted or proxied deployments." example:"https://api.telegram.org"`
-	Profile    string               `json:"profile,omitempty" doc:"Optional renderer profile slug applied when this destination renders outgoing messages." example:"detailed"`
+	ID               string               `json:"id" doc:"Stable operator-defined destination identifier. Choose a slug that routes and operators will reference." example:"telegram-bot"`
+	Type             routeDestinationType `json:"type" doc:"Destination sender type to configure."`
+	WebhookURL       string               `json:"webhook_url,omitempty" doc:"Slack incoming webhook URL used for outgoing sends." example:"https://hooks.slack.com/services/T000/B000/XXXX"`
+	BotToken         string               `json:"bot_token,omitempty" doc:"Telegram bot token used for outgoing sends." example:"123456:telegram-bot-token"`
+	ChatID           string               `json:"chat_id,omitempty" doc:"Telegram chat identifier or channel username that receives rendered messages." example:"-1004353814221"`
+	APIBaseURL       string               `json:"api_base_url,omitempty" doc:"Optional Telegram Bot API base URL override for self-hosted or proxied deployments." example:"https://api.telegram.org"`
+	RendererProfiles []string             `json:"renderer_profiles,omitempty" doc:"Renderer profile slugs selected by this destination. At most one profile may target each source and event pair."`
 }
 
 func (destinationRequestModel) Schema(r huma.Registry) *huma.Schema {
@@ -344,48 +342,48 @@ type githubIntegrationRequestModel struct {
 }
 
 type slackDestinationModel struct {
-	ID         string               `json:"id" doc:"Stable operator-defined destination identifier." example:"slack-deployments"`
-	Type       routeDestinationType `json:"type" enum:"slack" doc:"Discriminator for the Slack sender."`
-	WebhookURL string               `json:"webhook_url,omitempty" doc:"Redacted Slack incoming webhook URL used for outgoing sends." example:"[REDACTED]"`
-	Profile    string               `json:"profile,omitempty" doc:"Optional renderer profile slug applied before sending to Slack." example:"detailed"`
-	CreatedAt  time.Time            `json:"created_at,omitempty" doc:"When the Slack destination was created."`
-	UpdatedAt  time.Time            `json:"updated_at,omitempty" doc:"When the Slack destination was last updated."`
+	ID               string               `json:"id" doc:"Stable operator-defined destination identifier." example:"slack-deployments"`
+	Type             routeDestinationType `json:"type" enum:"slack" doc:"Discriminator for the Slack sender."`
+	WebhookURL       string               `json:"webhook_url,omitempty" doc:"Redacted Slack incoming webhook URL used for outgoing sends." example:"[REDACTED]"`
+	RendererProfiles []string             `json:"renderer_profiles,omitempty" doc:"Event-specific renderer profiles selected before sending to Slack."`
+	CreatedAt        time.Time            `json:"created_at,omitempty" doc:"When the Slack destination was created."`
+	UpdatedAt        time.Time            `json:"updated_at,omitempty" doc:"When the Slack destination was last updated."`
 }
 
 type telegramDestinationModel struct {
-	ID         string               `json:"id" doc:"Stable operator-defined destination identifier." example:"telegram-bot"`
-	Type       routeDestinationType `json:"type" enum:"telegram" doc:"Discriminator for the Telegram sender."`
-	BotToken   string               `json:"bot_token,omitempty" doc:"Redacted Telegram bot token used for outgoing sends." example:"[REDACTED]"`
-	ChatID     string               `json:"chat_id,omitempty" doc:"Telegram chat identifier or channel username that receives messages." example:"-1004353814221"`
-	APIBaseURL string               `json:"api_base_url,omitempty" doc:"Optional Telegram Bot API base URL override." example:"https://api.telegram.org"`
-	Profile    string               `json:"profile,omitempty" doc:"Optional renderer profile slug applied before sending to Telegram." example:"compact"`
-	CreatedAt  time.Time            `json:"created_at,omitempty" doc:"When the Telegram destination was created."`
-	UpdatedAt  time.Time            `json:"updated_at,omitempty" doc:"When the Telegram destination was last updated."`
+	ID               string               `json:"id" doc:"Stable operator-defined destination identifier." example:"telegram-bot"`
+	Type             routeDestinationType `json:"type" enum:"telegram" doc:"Discriminator for the Telegram sender."`
+	BotToken         string               `json:"bot_token,omitempty" doc:"Redacted Telegram bot token used for outgoing sends." example:"[REDACTED]"`
+	ChatID           string               `json:"chat_id,omitempty" doc:"Telegram chat identifier or channel username that receives messages." example:"-1004353814221"`
+	APIBaseURL       string               `json:"api_base_url,omitempty" doc:"Optional Telegram Bot API base URL override." example:"https://api.telegram.org"`
+	RendererProfiles []string             `json:"renderer_profiles,omitempty" doc:"Event-specific renderer profiles selected before sending to Telegram."`
+	CreatedAt        time.Time            `json:"created_at,omitempty" doc:"When the Telegram destination was created."`
+	UpdatedAt        time.Time            `json:"updated_at,omitempty" doc:"When the Telegram destination was last updated."`
 }
 
 type teamsDestinationModel struct {
-	ID         string               `json:"id" doc:"Stable operator-defined destination identifier." example:"teams-oncall"`
-	Type       routeDestinationType `json:"type" enum:"teams" doc:"Discriminator for the Microsoft Teams webhook sender."`
-	WebhookURL string               `json:"webhook_url,omitempty" doc:"Redacted Microsoft Teams incoming webhook URL used for outgoing sends." example:"[REDACTED]"`
-	Profile    string               `json:"profile,omitempty" doc:"Optional renderer profile slug applied before sending to Teams." example:"detailed"`
-	CreatedAt  time.Time            `json:"created_at,omitempty" doc:"When the Teams destination was created."`
-	UpdatedAt  time.Time            `json:"updated_at,omitempty" doc:"When the Teams destination was last updated."`
+	ID               string               `json:"id" doc:"Stable operator-defined destination identifier." example:"teams-oncall"`
+	Type             routeDestinationType `json:"type" enum:"teams" doc:"Discriminator for the Microsoft Teams webhook sender."`
+	WebhookURL       string               `json:"webhook_url,omitempty" doc:"Redacted Microsoft Teams incoming webhook URL used for outgoing sends." example:"[REDACTED]"`
+	RendererProfiles []string             `json:"renderer_profiles,omitempty" doc:"Event-specific renderer profiles selected before sending to Teams."`
+	CreatedAt        time.Time            `json:"created_at,omitempty" doc:"When the Teams destination was created."`
+	UpdatedAt        time.Time            `json:"updated_at,omitempty" doc:"When the Teams destination was last updated."`
 }
 
 type slackDestinationRequestModel struct {
-	ID         string               `json:"id" doc:"Stable operator-defined destination identifier." example:"slack-deployments"`
-	Type       routeDestinationType `json:"type" enum:"slack" doc:"Discriminator for the Slack sender."`
-	WebhookURL string               `json:"webhook_url,omitempty" doc:"Slack incoming webhook URL used for outgoing sends." example:"https://hooks.slack.com/services/T000/B000/XXXX"`
-	Profile    string               `json:"profile,omitempty" doc:"Optional renderer profile slug applied before sending to Slack." example:"detailed"`
+	ID               string               `json:"id" doc:"Stable operator-defined destination identifier." example:"slack-deployments"`
+	Type             routeDestinationType `json:"type" enum:"slack" doc:"Discriminator for the Slack sender."`
+	WebhookURL       string               `json:"webhook_url,omitempty" doc:"Slack incoming webhook URL used for outgoing sends." example:"https://hooks.slack.com/services/T000/B000/XXXX"`
+	RendererProfiles []string             `json:"renderer_profiles,omitempty" doc:"Event-specific renderer profiles selected before sending to Slack."`
 }
 
 type telegramDestinationRequestModel struct {
-	ID         string               `json:"id" doc:"Stable operator-defined destination identifier." example:"telegram-bot"`
-	Type       routeDestinationType `json:"type" enum:"telegram" doc:"Discriminator for the Telegram sender."`
-	BotToken   string               `json:"bot_token,omitempty" doc:"Telegram bot token used for outgoing sends." example:"123456:telegram-bot-token"`
-	ChatID     string               `json:"chat_id,omitempty" doc:"Telegram chat identifier or channel username that receives messages." example:"-1004353814221"`
-	APIBaseURL string               `json:"api_base_url,omitempty" doc:"Optional Telegram Bot API base URL override." example:"https://api.telegram.org"`
-	Profile    string               `json:"profile,omitempty" doc:"Optional renderer profile slug applied before sending to Telegram." example:"compact"`
+	ID               string               `json:"id" doc:"Stable operator-defined destination identifier." example:"telegram-bot"`
+	Type             routeDestinationType `json:"type" enum:"telegram" doc:"Discriminator for the Telegram sender."`
+	BotToken         string               `json:"bot_token,omitempty" doc:"Telegram bot token used for outgoing sends." example:"123456:telegram-bot-token"`
+	ChatID           string               `json:"chat_id,omitempty" doc:"Telegram chat identifier or channel username that receives messages." example:"-1004353814221"`
+	APIBaseURL       string               `json:"api_base_url,omitempty" doc:"Optional Telegram Bot API base URL override." example:"https://api.telegram.org"`
+	RendererProfiles []string             `json:"renderer_profiles,omitempty" doc:"Event-specific renderer profiles selected before sending to Telegram."`
 }
 
 type listIntegrationsInput struct {
@@ -420,10 +418,10 @@ type integrationResponse struct {
 }
 
 type teamsDestinationRequestModel struct {
-	ID         string               `json:"id" doc:"Stable operator-defined destination identifier." example:"teams-oncall"`
-	Type       routeDestinationType `json:"type" enum:"teams" doc:"Discriminator for the Microsoft Teams webhook sender."`
-	WebhookURL string               `json:"webhook_url,omitempty" doc:"Microsoft Teams incoming webhook URL used for outgoing sends." example:"https://example.webhook.office.com/webhookb2/..."`
-	Profile    string               `json:"profile,omitempty" doc:"Optional renderer profile slug applied before sending to Teams." example:"detailed"`
+	ID               string               `json:"id" doc:"Stable operator-defined destination identifier." example:"teams-oncall"`
+	Type             routeDestinationType `json:"type" enum:"teams" doc:"Discriminator for the Microsoft Teams webhook sender."`
+	WebhookURL       string               `json:"webhook_url,omitempty" doc:"Microsoft Teams incoming webhook URL used for outgoing sends." example:"https://example.webhook.office.com/webhookb2/..."`
+	RendererProfiles []string             `json:"renderer_profiles,omitempty" doc:"Event-specific renderer profiles selected before sending to Teams."`
 }
 
 type listDestinationsInput struct {
@@ -458,20 +456,17 @@ type destinationResponse struct {
 }
 
 type rendererProfileModel struct {
-	ID        string                      `json:"id" doc:"Stable renderer profile identifier referenced by destinations." example:"detailed"`
-	Bindings  []rendererEventBindingModel `json:"bindings" doc:"Event-specific template bindings contained in this profile."`
-	CreatedAt time.Time                   `json:"created_at,omitempty" doc:"When the renderer profile was created."`
-	UpdatedAt time.Time                   `json:"updated_at,omitempty" doc:"When the renderer profile was last updated."`
+	ID        string                 `json:"id" doc:"Stable renderer profile identifier referenced by destinations." example:"watcher-deployment-failed-detailed"`
+	Event     rendererEventRefModel  `json:"event" doc:"Exact source event contract this profile targets."`
+	Templates rendererTemplatesModel `json:"templates" doc:"Destination templates for this specific event type."`
+	CreatedAt time.Time              `json:"created_at,omitempty" doc:"When the renderer profile was created."`
+	UpdatedAt time.Time              `json:"updated_at,omitempty" doc:"When the renderer profile was last updated."`
 }
 
 type rendererProfileRequestModel struct {
-	ID       string                      `json:"id" doc:"Stable renderer profile identifier referenced by destinations." example:"compact"`
-	Bindings []rendererEventBindingModel `json:"bindings" doc:"Event-specific template bindings contained in this profile."`
-}
-
-type rendererEventBindingModel struct {
-	Event     rendererEventRefModel  `json:"event" doc:"Exact source event contract this binding targets."`
-	Templates rendererTemplatesModel `json:"templates" doc:"Templates used when this specific event type is rendered."`
+	ID        string                 `json:"id" doc:"Stable renderer profile identifier referenced by destinations." example:"watcher-deployment-failed-compact"`
+	Event     rendererEventRefModel  `json:"event" doc:"Exact source event contract this profile targets."`
+	Templates rendererTemplatesModel `json:"templates" doc:"Destination templates for this specific event type."`
 }
 
 type rendererEventRefModel struct {
@@ -509,7 +504,7 @@ type listRendererProfilesInput struct {
 }
 
 type rendererProfileDetailInput struct {
-	ProfileID string `path:"profile_id" doc:"Stable renderer profile identifier, for example detailed or compact." example:"detailed"`
+	ProfileID string `path:"profile_id" doc:"Stable renderer profile identifier, for example watcher-deployment-failed-detailed." example:"watcher-deployment-failed-detailed"`
 }
 
 type createRendererProfileInput struct {
@@ -517,12 +512,12 @@ type createRendererProfileInput struct {
 }
 
 type updateRendererProfileInput struct {
-	ProfileID string `path:"profile_id" doc:"Stable renderer profile identifier, for example detailed or compact." example:"detailed"`
+	ProfileID string `path:"profile_id" doc:"Stable renderer profile identifier, for example watcher-deployment-failed-detailed." example:"watcher-deployment-failed-detailed"`
 	Body      rendererProfileRequestModel
 }
 
 type deleteRendererProfileInput struct {
-	ProfileID string `path:"profile_id" doc:"Stable renderer profile identifier, for example detailed or compact." example:"detailed"`
+	ProfileID string `path:"profile_id" doc:"Stable renderer profile identifier, for example watcher-deployment-failed-detailed." example:"watcher-deployment-failed-detailed"`
 }
 
 type rendererProfilesResponse struct {
@@ -601,111 +596,63 @@ func domainIntegrationFromRequestModel(in integrationRequestModel) domain.Manage
 
 func destinationModelFromDomain(in domain.ManagedDestination) destinationConfigModel {
 	return destinationConfigModel{
-		ID:         in.ID,
-		Type:       routeDestinationType(in.Type),
-		WebhookURL: redactIfPresent(in.WebhookURL),
-		BotToken:   redactIfPresent(in.BotToken),
-		ChatID:     in.ChatID,
-		APIBaseURL: in.APIBaseURL,
-		Profile:    in.Profile,
-		CreatedAt:  in.CreatedAt,
-		UpdatedAt:  in.UpdatedAt,
+		ID:               in.ID,
+		Type:             routeDestinationType(in.Type),
+		WebhookURL:       redactIfPresent(in.WebhookURL),
+		BotToken:         redactIfPresent(in.BotToken),
+		ChatID:           in.ChatID,
+		APIBaseURL:       in.APIBaseURL,
+		RendererProfiles: append([]string(nil), in.RendererProfiles...),
+		CreatedAt:        in.CreatedAt,
+		UpdatedAt:        in.UpdatedAt,
 	}
 }
 
 func domainDestinationFromModel(in destinationConfigModel) domain.ManagedDestination {
 	return domain.ManagedDestination{
-		ID:         in.ID,
-		Type:       domain.DestinationType(in.Type),
-		WebhookURL: in.WebhookURL,
-		BotToken:   in.BotToken,
-		ChatID:     in.ChatID,
-		APIBaseURL: in.APIBaseURL,
-		Profile:    in.Profile,
+		ID:               in.ID,
+		Type:             domain.DestinationType(in.Type),
+		WebhookURL:       in.WebhookURL,
+		BotToken:         in.BotToken,
+		ChatID:           in.ChatID,
+		APIBaseURL:       in.APIBaseURL,
+		RendererProfiles: append([]string(nil), in.RendererProfiles...),
 	}
 }
 
 func domainDestinationFromRequestModel(in destinationRequestModel) domain.ManagedDestination {
 	return domain.ManagedDestination{
-		ID:         in.ID,
-		Type:       domain.DestinationType(in.Type),
-		WebhookURL: in.WebhookURL,
-		BotToken:   in.BotToken,
-		ChatID:     in.ChatID,
-		APIBaseURL: in.APIBaseURL,
-		Profile:    in.Profile,
+		ID:               in.ID,
+		Type:             domain.DestinationType(in.Type),
+		WebhookURL:       in.WebhookURL,
+		BotToken:         in.BotToken,
+		ChatID:           in.ChatID,
+		APIBaseURL:       in.APIBaseURL,
+		RendererProfiles: append([]string(nil), in.RendererProfiles...),
 	}
 }
 
 func rendererProfileModelFromDomain(in domain.ManagedRendererProfile) rendererProfileModel {
 	return rendererProfileModel{
 		ID:        in.ID,
-		Bindings:  rendererBindingModelsFromDomain(in.Profile),
+		Event:     rendererEventRefModel{Source: routeSource(in.Profile.Source), Key: routeEventType(in.Profile.Key)},
+		Templates: rendererTemplatesModelFromDomain(in.Profile.Templates),
 		CreatedAt: in.CreatedAt,
 		UpdatedAt: in.UpdatedAt,
 	}
 }
 
 func domainRendererProfileFromRequestModel(in rendererProfileRequestModel) (domain.ManagedRendererProfile, error) {
-	profile, err := domainRendererProfileBodyFromBindingModels(in.Bindings)
-	if err != nil {
-		return domain.ManagedRendererProfile{}, err
-	}
+	source := domain.Source(strings.TrimSpace(string(in.Event.Source)))
+	eventKey := strings.TrimSpace(string(in.Event.Key))
 	return domain.ManagedRendererProfile{
-		ID:      in.ID,
-		Profile: profile,
+		ID: in.ID,
+		Profile: domain.RendererProfile{
+			Source:    source,
+			Key:       eventKey,
+			Templates: rendererTemplatesModelToDomain(in.Templates),
+		},
 	}, nil
-}
-
-func rendererBindingModelsFromDomain(in domain.RendererProfile) []rendererEventBindingModel {
-	bindings := append([]domain.RendererBinding(nil), in.Bindings...)
-	sort.Slice(bindings, func(i, j int) bool {
-		left := string(bindings[i].Event.Source) + ":" + bindings[i].Event.Key
-		right := string(bindings[j].Event.Source) + ":" + bindings[j].Event.Key
-		return left < right
-	})
-
-	out := make([]rendererEventBindingModel, 0, len(bindings))
-	for _, binding := range bindings {
-		out = append(out, rendererEventBindingModel{
-			Event: rendererEventRefModel{
-				Source: routeSource(binding.Event.Source),
-				Key:    routeEventType(binding.Event.Key),
-			},
-			Templates: rendererTemplatesModelFromDomain(binding.Templates),
-		})
-	}
-	return out
-}
-
-func domainRendererProfileBodyFromBindingModels(in []rendererEventBindingModel) (domain.RendererProfile, error) {
-	out := domain.RendererProfile{
-		Bindings: make([]domain.RendererBinding, 0, len(in)),
-	}
-	seen := make(map[string]struct{}, len(in))
-	for _, binding := range in {
-		source := domain.Source(strings.TrimSpace(string(binding.Event.Source)))
-		if source == "" {
-			return domain.RendererProfile{}, fmt.Errorf("renderer profile binding event.source is required")
-		}
-		eventKey := strings.TrimSpace(string(binding.Event.Key))
-		if eventKey == "" {
-			return domain.RendererProfile{}, fmt.Errorf("renderer profile binding event.key is required")
-		}
-		composite := string(source) + ":" + eventKey
-		if _, exists := seen[composite]; exists {
-			return domain.RendererProfile{}, fmt.Errorf("renderer profile contains duplicate binding %s", composite)
-		}
-		seen[composite] = struct{}{}
-		out.Bindings = append(out.Bindings, domain.RendererBinding{
-			Event: domain.EventRef{
-				Source: source,
-				Key:    eventKey,
-			},
-			Templates: rendererTemplatesModelToDomain(binding.Templates),
-		})
-	}
-	return out, nil
 }
 
 func rendererTemplatesModelFromDomain(in domain.RendererDestinationTemplates) rendererTemplatesModel {

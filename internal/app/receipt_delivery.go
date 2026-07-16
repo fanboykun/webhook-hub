@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/fanboykun/webhook-hub/internal/domain"
 	"gorm.io/gorm"
@@ -64,5 +65,15 @@ func (s *Service) ListDeliveries(ctx context.Context, filter domain.DeliveryFilt
 }
 
 func (s *Service) RetryDelivery(ctx context.Context, deliveryID string) error {
+	delivery, err := s.store.GetDelivery(ctx, deliveryID)
+	if err != nil {
+		return err
+	}
+	if s.destinations == nil {
+		return errors.New("destination registry is not configured")
+	}
+	if _, ok := s.destinations.Get(delivery.DestinationID); !ok {
+		return fmt.Errorf("delivery destination %q no longer exists", delivery.DestinationID)
+	}
 	return s.store.RetryDelivery(ctx, deliveryID, s.clock.Now().UTC())
 }

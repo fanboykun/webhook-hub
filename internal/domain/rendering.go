@@ -3,35 +3,28 @@ package domain
 import "time"
 
 type Destination struct {
-	ID      string
-	Type    DestinationType
-	Profile string
+	ID               string
+	Type             DestinationType
+	RendererProfiles []string
+	SelectedProfile  string
 }
 
 type ManagedDestination struct {
-	ID         string
-	Type       DestinationType
-	WebhookURL string
-	BotToken   string
-	ChatID     string
-	APIBaseURL string
-	Profile    string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-}
-
-type EventRef struct {
-	Source Source `json:"source"`
-	Key    string `json:"key"`
-}
-
-type RendererBinding struct {
-	Event     EventRef                     `json:"event"`
-	Templates RendererDestinationTemplates `json:"templates"`
+	ID               string
+	Type             DestinationType
+	WebhookURL       string
+	BotToken         string
+	ChatID           string
+	APIBaseURL       string
+	RendererProfiles []string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type RendererProfile struct {
-	Bindings []RendererBinding `json:"bindings"`
+	Source    Source                       `json:"source"`
+	Key       string                       `json:"key"`
+	Templates RendererDestinationTemplates `json:"templates"`
 }
 
 type RendererDestinationTemplates struct {

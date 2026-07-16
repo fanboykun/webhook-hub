@@ -71,10 +71,6 @@ func main() {
 		logger.Error("dynamic_config.bootstrap_failed", "error", err)
 		os.Exit(1)
 	}
-	if err := appService.LoadRoutes(context.Background()); err != nil {
-		logger.Error("routes.load_failed", "error", err)
-		os.Exit(1)
-	}
 
 	server := httpserver.New(cfg, appService, apiLogger)
 

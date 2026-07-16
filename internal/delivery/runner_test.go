@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fanboykun/webhook-hub/internal/clock"
+	"github.com/fanboykun/webhook-hub/internal/config"
 	"github.com/fanboykun/webhook-hub/internal/domain"
 	"github.com/fanboykun/webhook-hub/internal/observability"
 	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
@@ -98,4 +99,57 @@ func TestRunnerProcessesPendingDelivery(t *testing.T) {
 
 	cancel()
 	runner.Wait()
+}
+
+func TestRunnerStartsConfiguredSchedulerConcurrency(t *testing.T) {
+	store := &observingRunnerStore{claims: make(chan string, 8)}
+	cfg := config.Config{Workers: config.WorkersConfig{
+		BatchSize:        1,
+		Concurrency:      3,
+		PollInterval:     time.Hour,
+		LeaseDuration:    time.Minute,
+		RecoveryInterval: time.Hour,
+	}}
+	service := NewService(store, cfg, runtimeconfig.NewDestinationRegistry(nil), runtimeconfig.NewRendererProfileRegistry(nil), clock.Real{}, nil)
+	runner := NewRunner(service)
+	ctx, cancel := context.WithCancel(context.Background())
+	runner.Start(ctx, "worker")
+
+	workerIDs := make(map[string]struct{}, cfg.Workers.Concurrency)
+	deadline := time.After(time.Second)
+	for len(workerIDs) < cfg.Workers.Concurrency {
+		select {
+		case workerID := <-store.claims:
+			workerIDs[workerID] = struct{}{}
+		case <-deadline:
+			cancel()
+			runner.Wait()
+			t.Fatalf("started %d distinct schedulers, want %d: %+v", len(workerIDs), cfg.Workers.Concurrency, workerIDs)
+		}
+	}
+	cancel()
+	runner.Wait()
+
+	for _, want := range []string{"worker-1", "worker-2", "worker-3"} {
+		if _, ok := workerIDs[want]; !ok {
+			t.Fatalf("scheduler %q was not started: %+v", want, workerIDs)
+		}
+	}
+}
+
+type observingRunnerStore struct {
+	claims chan string
+}
+
+func (s *observingRunnerStore) ClaimDueDeliveries(_ context.Context, claim domain.ClaimRequest) ([]domain.DeliveryEnvelope, error) {
+	s.claims <- claim.WorkerID
+	return nil, nil
+}
+
+func (*observingRunnerStore) CompleteAttempt(context.Context, domain.AttemptResult) error {
+	return nil
+}
+
+func (*observingRunnerStore) RecoverExpiredLeases(context.Context, time.Time) (int64, error) {
+	return 0, nil
 }

@@ -320,7 +320,6 @@ func TestProcessOnceUsesHotReloadedDestinationRegistry(t *testing.T) {
 		"slack-deployments": {
 			Type:        domain.DestinationSlack,
 			ResolvedURL: second.URL,
-			Profile:     "detailed",
 		},
 	})
 
@@ -367,7 +366,6 @@ func deliveryTestConfig(t *testing.T, slackURL string) config.Config {
 			"slack-deployments": {
 				Type:        domain.DestinationSlack,
 				ResolvedURL: slackURL,
-				Profile:     "detailed",
 			},
 		},
 	}
@@ -429,7 +427,6 @@ func deliveryTelegramTestConfig(t *testing.T, apiBaseURL string) config.Config {
 				ResolvedToken: "test-token",
 				ChatID:        "-100123456789",
 				APIBaseURL:    apiBaseURL,
-				Profile:       "compact",
 			},
 		},
 	}
@@ -460,7 +457,6 @@ func deliveryTeamsTestConfig(t *testing.T, webhookURL string) config.Config {
 			"teams-oncall": {
 				Type:        domain.DestinationTeams,
 				ResolvedURL: webhookURL,
-				Profile:     "detailed",
 			},
 		},
 	}

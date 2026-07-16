@@ -204,7 +204,7 @@ func registerRoutes(api huma.API, cfg config.Config, handler *Handler) {
 		Method:      http.MethodGet,
 		Path:        "/api/v1/renderer-profiles",
 		Summary:     "List renderer profiles",
-		Description: "Returns the dynamically managed renderer profiles that destinations can reference to customize source-specific and event-specific message output.",
+		Description: "Returns named renderer profiles. Each profile targets exactly one source and event contract.",
 		Tags:        []string{"Renderer Profiles"},
 		Security:    []map[string][]string{{"bearerAuth": {}}},
 	}, handler.listRendererProfiles)
@@ -214,7 +214,7 @@ func registerRoutes(api huma.API, cfg config.Config, handler *Handler) {
 		Method:      http.MethodGet,
 		Path:        "/api/v1/renderer-profiles/{profile_id}",
 		Summary:     "Get renderer profile detail",
-		Description: "Returns one dynamically managed renderer profile, including its per-source defaults and event-specific overrides.",
+		Description: "Returns one dynamically managed renderer profile and its exact source/event contract.",
 		Tags:        []string{"Renderer Profiles"},
 		Security:    []map[string][]string{{"bearerAuth": {}}},
 	}, handler.getRendererProfile)
@@ -224,7 +224,7 @@ func registerRoutes(api huma.API, cfg config.Config, handler *Handler) {
 		Method:      http.MethodPost,
 		Path:        "/api/v1/renderer-profiles",
 		Summary:     "Create renderer profile",
-		Description: "Creates a dynamically managed renderer profile and reloads the live renderer registry used by delivery workers.",
+		Description: "Validates and compiles one source/event renderer profile before reloading the live delivery registry.",
 		Tags:        []string{"Renderer Profiles"},
 		Security:    []map[string][]string{{"bearerAuth": {}}},
 	}, handler.createRendererProfile)
@@ -234,7 +234,7 @@ func registerRoutes(api huma.API, cfg config.Config, handler *Handler) {
 		Method:      http.MethodPut,
 		Path:        "/api/v1/renderer-profiles/{profile_id}",
 		Summary:     "Update renderer profile",
-		Description: "Updates one dynamically managed renderer profile and reloads the live renderer registry used by delivery workers.",
+		Description: "Validates and compiles one source/event renderer profile before reloading the live delivery registry.",
 		Tags:        []string{"Renderer Profiles"},
 		Security:    []map[string][]string{{"bearerAuth": {}}},
 	}, handler.updateRendererProfile)
@@ -244,7 +244,7 @@ func registerRoutes(api huma.API, cfg config.Config, handler *Handler) {
 		Method:      http.MethodDelete,
 		Path:        "/api/v1/renderer-profiles/{profile_id}",
 		Summary:     "Delete renderer profile",
-		Description: "Deletes one dynamically managed renderer profile and reloads the live renderer registry. Destinations that still reference the deleted profile fall back to built-in rendering.",
+		Description: "Deletes an unreferenced renderer profile and reloads the live renderer registry. Referenced profiles return 409 Conflict.",
 		Tags:        []string{"Renderer Profiles"},
 		Security:    []map[string][]string{{"bearerAuth": {}}},
 	}, handler.deleteRendererProfile)

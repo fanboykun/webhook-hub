@@ -1,10 +1,14 @@
 package runtimeconfig
 
 import (
+	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/fanboykun/webhook-hub/internal/config"
 	"github.com/fanboykun/webhook-hub/internal/domain"
+	eventdefaults "github.com/fanboykun/webhook-hub/internal/eventcatalog/defaults"
+	"github.com/fanboykun/webhook-hub/internal/renderprofile"
 )
 
 type IntegrationRegistry struct {
@@ -49,6 +53,7 @@ func NewDestinationRegistry(items map[string]config.DestinationConfig) *Destinat
 func (r *DestinationRegistry) Replace(items map[string]config.DestinationConfig) {
 	cloned := make(map[string]config.DestinationConfig, len(items))
 	for id, item := range items {
+		item.RendererProfiles = append([]string(nil), item.RendererProfiles...)
 		cloned[id] = item
 	}
 	r.mu.Lock()
@@ -60,50 +65,77 @@ func (r *DestinationRegistry) Get(id string) (config.DestinationConfig, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	item, ok := r.items[id]
+	item.RendererProfiles = append([]string(nil), item.RendererProfiles...)
 	return item, ok
 }
 
 type RendererProfileRegistry struct {
 	mu    sync.RWMutex
-	items map[string]domain.RendererProfile
+	items map[string]compiledRendererProfile
 }
 
+type compiledRendererProfile struct {
+	raw      domain.RendererProfile
+	compiled renderprofile.CompiledProfile
+}
+
+var ErrRendererProfileNotFound = errors.New("renderer profile not found")
+
 func NewRendererProfileRegistry(items map[string]domain.RendererProfile) *RendererProfileRegistry {
-	r := &RendererProfileRegistry{}
-	r.Replace(items)
+	r := &RendererProfileRegistry{items: map[string]compiledRendererProfile{}}
+	if err := r.Replace(items); err != nil {
+		panic(err)
+	}
 	return r
 }
 
-func (r *RendererProfileRegistry) Replace(items map[string]domain.RendererProfile) {
-	cloned := make(map[string]domain.RendererProfile, len(items))
+func (r *RendererProfileRegistry) Replace(items map[string]domain.RendererProfile) error {
+	compiled := make(map[string]compiledRendererProfile, len(items))
+	catalog := eventdefaults.Registry()
 	for id, item := range items {
-		cloned[id] = cloneDomainProfile(item)
+		definition, ok := catalog.Resolve(item.Source, item.Key)
+		if !ok {
+			return fmt.Errorf("renderer profile %q references unknown event %s:%s", id, item.Source, item.Key)
+		}
+		profile, err := renderprofile.CompileProfile(item, definition)
+		if err != nil {
+			return fmt.Errorf("compile renderer profile %q: %w", id, err)
+		}
+		compiled[id] = compiledRendererProfile{raw: cloneDomainProfile(item), compiled: profile}
 	}
 	r.mu.Lock()
-	r.items = cloned
+	r.items = compiled
 	r.mu.Unlock()
+	return nil
 }
 
 func (r *RendererProfileRegistry) Get(id string) (domain.RendererProfile, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	item, ok := r.items[id]
-	return cloneDomainProfile(item), ok
+	return cloneDomainProfile(item.raw), ok
 }
 
-func (r *RendererProfileRegistry) Resolve(profileID string, event domain.Event) (domain.RendererDestinationTemplates, bool) {
+func (r *RendererProfileRegistry) Resolve(profileIDs []string, event domain.Event) (renderprofile.CompiledProfile, string, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	profile, ok := r.items[profileID]
-	if !ok {
-		return domain.RendererDestinationTemplates{}, false
-	}
-	for _, binding := range profile.Bindings {
-		if binding.Event.Source == event.Source && binding.Event.Key == event.Key {
-			return cloneDomainTemplates(binding.Templates), true
+	var matched renderprofile.CompiledProfile
+	matchedID := ""
+	for _, profileID := range profileIDs {
+		profile, ok := r.items[profileID]
+		if !ok {
+			return renderprofile.CompiledProfile{}, "", fmt.Errorf("%w: %s", ErrRendererProfileNotFound, profileID)
 		}
+		if profile.compiled.Source != event.Source || profile.compiled.Key != event.Key {
+			continue
+		}
+		if matchedID != "" {
+			return renderprofile.CompiledProfile{}, "", fmt.Errorf("renderer profiles %q and %q both match %s:%s", matchedID, profileID, event.Source, event.Key)
+		}
+		matched = profile.compiled
+		matchedID = profileID
 	}
-	return domain.RendererDestinationTemplates{}, false
+	return matched, matchedID, nil
 }
 
 func StaticIntegrations(cfg config.Config) []domain.ManagedIntegration {
@@ -123,13 +155,13 @@ func StaticDestinations(cfg config.Config) []domain.ManagedDestination {
 	out := make([]domain.ManagedDestination, 0, len(cfg.Destinations))
 	for id, destination := range cfg.Destinations {
 		out = append(out, domain.ManagedDestination{
-			ID:         id,
-			Type:       destination.Type,
-			WebhookURL: destination.ResolvedURL,
-			BotToken:   destination.ResolvedToken,
-			ChatID:     destination.ChatID,
-			APIBaseURL: destination.APIBaseURL,
-			Profile:    destination.Profile,
+			ID:               id,
+			Type:             destination.Type,
+			WebhookURL:       destination.ResolvedURL,
+			BotToken:         destination.ResolvedToken,
+			ChatID:           destination.ChatID,
+			APIBaseURL:       destination.APIBaseURL,
+			RendererProfiles: append([]string(nil), destination.RendererProfiles...),
 		})
 	}
 	return out
@@ -141,6 +173,24 @@ func StaticRendererProfiles(cfg config.Config) []domain.ManagedRendererProfile {
 		out = append(out, domain.ManagedRendererProfile{
 			ID:      id,
 			Profile: profileConfigToDomain(profile),
+		})
+	}
+	return out
+}
+
+func StaticRoutes(cfg config.Config) []domain.Route {
+	out := make([]domain.Route, 0, len(cfg.Routes))
+	for _, route := range cfg.Routes {
+		out = append(out, domain.Route{
+			ID:          route.ID,
+			Description: route.Description,
+			Match: domain.RouteMatchCriteria{
+				Sources:      append([]domain.Source(nil), route.Match.Sources...),
+				Types:        append([]string(nil), route.Match.Types...),
+				Severities:   append([]domain.Severity(nil), route.Match.Severities...),
+				Environments: append([]string(nil), route.Match.Environments...),
+			},
+			Destinations: append([]string(nil), route.Destinations...),
 		})
 	}
 	return out
@@ -163,12 +213,12 @@ func MapDestinations(items []domain.ManagedDestination) map[string]config.Destin
 	out := make(map[string]config.DestinationConfig, len(items))
 	for _, item := range items {
 		out[item.ID] = config.DestinationConfig{
-			Type:          item.Type,
-			ChatID:        item.ChatID,
-			APIBaseURL:    item.APIBaseURL,
-			Profile:       item.Profile,
-			ResolvedURL:   item.WebhookURL,
-			ResolvedToken: item.BotToken,
+			Type:             item.Type,
+			ChatID:           item.ChatID,
+			APIBaseURL:       item.APIBaseURL,
+			RendererProfiles: append([]string(nil), item.RendererProfiles...),
+			ResolvedURL:      item.WebhookURL,
+			ResolvedToken:    item.BotToken,
 		}
 	}
 	return out
@@ -199,32 +249,19 @@ func RendererProfilesToConfig(items map[string]domain.RendererProfile) map[strin
 }
 
 func profileConfigToDomain(in config.ProfileConfig) domain.RendererProfile {
-	out := domain.RendererProfile{
-		Bindings: make([]domain.RendererBinding, 0, len(in.Bindings)),
+	return domain.RendererProfile{
+		Source:    in.Source,
+		Key:       in.Key,
+		Templates: destinationTemplatesToDomain(in.Templates),
 	}
-	for _, binding := range in.Bindings {
-		out.Bindings = append(out.Bindings, domain.RendererBinding{
-			Event: domain.EventRef{
-				Source: binding.Event.Source,
-				Key:    binding.Event.Key,
-			},
-			Templates: destinationTemplatesToDomain(binding.Templates),
-		})
-	}
-	return out
 }
 
 func cloneDomainProfile(in domain.RendererProfile) domain.RendererProfile {
-	out := domain.RendererProfile{
-		Bindings: make([]domain.RendererBinding, 0, len(in.Bindings)),
+	return domain.RendererProfile{
+		Source:    in.Source,
+		Key:       in.Key,
+		Templates: cloneDomainTemplates(in.Templates),
 	}
-	for _, binding := range in.Bindings {
-		out.Bindings = append(out.Bindings, domain.RendererBinding{
-			Event:     binding.Event,
-			Templates: cloneDomainTemplates(binding.Templates),
-		})
-	}
-	return out
 }
 
 func cloneDomainTemplates(in domain.RendererDestinationTemplates) domain.RendererDestinationTemplates {
@@ -249,19 +286,11 @@ func cloneDomainTemplates(in domain.RendererDestinationTemplates) domain.Rendere
 }
 
 func domainProfileToConfig(in domain.RendererProfile) config.ProfileConfig {
-	out := config.ProfileConfig{
-		Bindings: make([]config.ProfileBindingConfig, 0, len(in.Bindings)),
+	return config.ProfileConfig{
+		Source:    in.Source,
+		Key:       in.Key,
+		Templates: destinationTemplatesFromDomain(in.Templates),
 	}
-	for _, binding := range in.Bindings {
-		out.Bindings = append(out.Bindings, config.ProfileBindingConfig{
-			Event: config.EventBindingConfig{
-				Source: binding.Event.Source,
-				Key:    binding.Event.Key,
-			},
-			Templates: destinationTemplatesFromDomain(binding.Templates),
-		})
-	}
-	return out
 }
 
 func destinationTemplatesToDomain(in config.DestinationTemplates) domain.RendererDestinationTemplates {

@@ -242,14 +242,16 @@ func (fakeWatcherAdapter) Verify(_ context.Context, integration config.Integrati
 func (fakeWatcherAdapter) Normalize(_ context.Context, integrationID string, _ config.IntegrationConfig, req InboundRequest) (AdapterResult, error) {
 	event := domain.EventCandidate{
 		EventEnvelope: domain.EventEnvelope{
-			Source:        domain.SourceWatcher,
-			IntegrationID: integrationID,
-			Key:           "watcher.deployment.failed",
-			Action:        "failed",
-			Lifecycle:     domain.LifecycleFailed,
-			Severity:      domain.SeverityError,
-			Title:         "deployment failed",
-			OccurredAt:    req.ReceivedAt,
+			Source:         domain.SourceWatcher,
+			IntegrationID:  integrationID,
+			Key:            "watcher.deployment.failed",
+			Action:         "failed",
+			Lifecycle:      domain.LifecycleFailed,
+			Severity:       domain.SeverityError,
+			Title:          "deployment failed",
+			OccurredAt:     req.ReceivedAt,
+			PayloadVersion: 1,
+			PayloadJSON:    []byte(`{"watcher":{},"service":{},"attempt":{}}`),
 		},
 	}
 	return AdapterResult{

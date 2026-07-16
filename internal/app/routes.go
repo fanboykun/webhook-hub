@@ -24,6 +24,8 @@ func (s *Service) GetRoute(ctx context.Context, routeID string) (domain.Route, e
 }
 
 func (s *Service) CreateRoute(ctx context.Context, route domain.Route) (domain.Route, error) {
+	s.dynamicMu.Lock()
+	defer s.dynamicMu.Unlock()
 	route = normalizeRoute(route)
 	now := s.clock.Now().UTC()
 	route.CreatedAt = now
@@ -34,13 +36,15 @@ func (s *Service) CreateRoute(ctx context.Context, route domain.Route) (domain.R
 	if err := s.store.CreateRoute(ctx, route); err != nil {
 		return domain.Route{}, err
 	}
-	if err := s.LoadRoutes(ctx); err != nil {
+	if err := s.loadRoutesLocked(ctx); err != nil {
 		return domain.Route{}, errors.Join(ErrRuntimeReloadRequired, err)
 	}
 	return route, nil
 }
 
 func (s *Service) UpdateRoute(ctx context.Context, route domain.Route) (domain.Route, error) {
+	s.dynamicMu.Lock()
+	defer s.dynamicMu.Unlock()
 	route = normalizeRoute(route)
 	current, err := s.store.GetRoute(ctx, route.ID)
 	if err != nil {
@@ -57,13 +61,15 @@ func (s *Service) UpdateRoute(ctx context.Context, route domain.Route) (domain.R
 	if err := s.store.UpdateRoute(ctx, route); err != nil {
 		return domain.Route{}, err
 	}
-	if err := s.LoadRoutes(ctx); err != nil {
+	if err := s.loadRoutesLocked(ctx); err != nil {
 		return domain.Route{}, errors.Join(ErrRuntimeReloadRequired, err)
 	}
 	return route, nil
 }
 
 func (s *Service) DeleteRoute(ctx context.Context, routeID string) error {
+	s.dynamicMu.Lock()
+	defer s.dynamicMu.Unlock()
 	if _, err := s.store.GetRoute(ctx, routeID); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrRouteNotFound
@@ -73,7 +79,7 @@ func (s *Service) DeleteRoute(ctx context.Context, routeID string) error {
 	if err := s.store.DeleteRoute(ctx, routeID); err != nil {
 		return err
 	}
-	if err := s.LoadRoutes(ctx); err != nil {
+	if err := s.loadRoutesLocked(ctx); err != nil {
 		return errors.Join(ErrRuntimeReloadRequired, err)
 	}
 	return nil

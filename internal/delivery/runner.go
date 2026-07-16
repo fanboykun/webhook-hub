@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -17,15 +18,19 @@ func NewRunner(service *Service) *Runner {
 }
 
 func (r *Runner) Start(ctx context.Context, workerID string) {
-	r.wg.Add(2)
+	concurrency := r.service.cfg.Workers.Concurrency
+	r.wg.Add(concurrency + 1)
 	if r.service.logger != nil {
-		r.service.logger.Info("delivery.scheduler_started", "worker_id", workerID)
-		r.service.logger.Info("delivery.recovery_started", "worker_id", workerID)
+		r.service.logger.Info("delivery.scheduler_started", "worker_group", workerID, "concurrency", concurrency)
+		r.service.logger.Info("delivery.recovery_started", "worker_group", workerID)
 	}
-	go func() {
-		defer r.wg.Done()
-		r.runScheduler(ctx, workerID)
-	}()
+	for index := 0; index < concurrency; index++ {
+		workerInstanceID := fmt.Sprintf("%s-%d", workerID, index+1)
+		go func(instanceID string) {
+			defer r.wg.Done()
+			r.runScheduler(ctx, instanceID)
+		}(workerInstanceID)
+	}
 	go func() {
 		defer r.wg.Done()
 		r.runRecovery(ctx)

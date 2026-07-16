@@ -62,6 +62,8 @@ func (h *Handler) updateRendererProfile(ctx context.Context, input *updateRender
 		switch {
 		case errors.Is(err, app.ErrRendererProfileNotFound):
 			return nil, huma.Error404NotFound("renderer profile not found")
+		case errors.Is(err, app.ErrRendererProfileInUse):
+			return nil, huma.Error409Conflict(err.Error())
 		case errors.Is(err, app.ErrRuntimeReloadRequired):
 			return nil, huma.Error503ServiceUnavailable("renderer profile persisted but runtime reload failed")
 		default:
@@ -76,6 +78,8 @@ func (h *Handler) deleteRendererProfile(ctx context.Context, input *deleteRender
 		switch {
 		case errors.Is(err, app.ErrRendererProfileNotFound):
 			return nil, huma.Error404NotFound("renderer profile not found")
+		case errors.Is(err, app.ErrRendererProfileInUse):
+			return nil, huma.Error409Conflict(err.Error())
 		case errors.Is(err, app.ErrRuntimeReloadRequired):
 			return nil, huma.Error503ServiceUnavailable("renderer profile deleted but runtime reload failed")
 		default:

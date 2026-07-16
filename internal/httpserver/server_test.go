@@ -49,6 +49,7 @@ func TestWatcherWebhookAccepted(t *testing.T) {
 		"event_type":     "watcher.deployment_failed",
 		"occurred_at":    "2026-06-18T08:42:10Z",
 		"watcher":        map[string]any{"id": 12, "name": "api-prod"},
+		"service":        map[string]any{"id": 87, "name": "api-prod", "service_type": "nssm"},
 		"attempt": map[string]any{
 			"id":                302,
 			"kind":              "deploy",
@@ -346,11 +347,11 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list renderer profiles expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"id":"detailed"`) {
+	if !strings.Contains(rec.Body.String(), `"id":"watcher-deployment-failed-detailed"`) {
 		t.Fatalf("expected renderer profile in list response, body=%s", rec.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/renderer-profiles/detailed", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/renderer-profiles/watcher-deployment-failed-detailed", nil)
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	rec = httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)
@@ -358,7 +359,7 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 		t.Fatalf("get renderer profile expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), `"key":"watcher.deployment.failed"`) {
-		t.Fatalf("expected renderer profile detail to include event binding, body=%s", rec.Body.String())
+		t.Fatalf("expected renderer profile detail to include event contract, body=%s", rec.Body.String())
 	}
 
 	updateIntegrationBody := []byte(`{"id":"github-main","source":"github","secret":"[REDACTED]"}`)
@@ -379,8 +380,8 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 		t.Fatalf("expected preserved integration secret, got %q", integration.Secret)
 	}
 
-	updateProfileBody := []byte(`{"id":"detailed","bindings":[{"event":{"source":"watcher","key":"watcher.deployment.failed"},"templates":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"},"telegram":{"text":"<b>{{.Title}}</b>"}}}]}`)
-	req = httptest.NewRequest(http.MethodPut, "/api/v1/renderer-profiles/detailed", bytes.NewReader(updateProfileBody))
+	updateProfileBody := []byte(`{"id":"watcher-deployment-failed-detailed","event":{"source":"watcher","key":"watcher.deployment.failed"},"templates":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"},"telegram":{"text":"<b>{{.Payload.attempt.target_version}}</b>"},"teams":{"title":"{{.Title}}","body":"{{.Summary}}"}}}`)
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/renderer-profiles/watcher-deployment-failed-detailed", bytes.NewReader(updateProfileBody))
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
@@ -389,22 +390,15 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 		t.Fatalf("update renderer profile expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	profile, err := store.GetRendererProfile(context.Background(), "detailed")
+	profile, err := store.GetRendererProfile(context.Background(), "watcher-deployment-failed-detailed")
 	if err != nil {
 		t.Fatalf("get renderer profile failed: %v", err)
 	}
-	var found *domain.RendererDestinationTemplates
-	for _, b := range profile.Profile.Bindings {
-		if b.Event.Key == "watcher.deployment.failed" {
-			found = &b.Templates
-			break
-		}
-	}
-	if found == nil || found.Telegram == nil {
+	if profile.Profile.Source != domain.SourceWatcher || profile.Profile.Key != "watcher.deployment.failed" || profile.Profile.Templates.Telegram == nil {
 		t.Fatalf("expected updated renderer profile to persist telegram template, got %+v", profile.Profile)
 	}
 
-	updateBody := []byte(`{"id":"slack-deployments","type":"slack","webhook_url":"[REDACTED]","profile":"detailed"}`)
+	updateBody := []byte(`{"id":"slack-deployments","type":"slack","webhook_url":"[REDACTED]","renderer_profiles":["watcher-deployment-failed-detailed"]}`)
 	req = httptest.NewRequest(http.MethodPut, "/api/v1/destinations/slack-deployments", bytes.NewReader(updateBody))
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	req.Header.Set("Content-Type", "application/json")
@@ -420,6 +414,14 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 	}
 	if item.WebhookURL != "https://example.invalid" {
 		t.Fatalf("expected preserved webhook url, got %q", item.WebhookURL)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/renderer-profiles/watcher-deployment-failed-detailed", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("delete referenced renderer profile expected 409, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/destinations/slack-deployments", nil)
@@ -451,7 +453,7 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 		t.Fatalf("delete integration expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	createProfileBody := []byte(`{"id":"ops-compact","bindings":[{"event":{"source":"watcher","key":"watcher.deployment.failed"},"templates":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"},"telegram":{"text":"<b>{{.Title}}</b>\n{{.Summary}}"}}}]}`)
+	createProfileBody := []byte(`{"id":"ops-compact","event":{"source":"watcher","key":"watcher.deployment.failed"},"templates":{"slack":{"title":"{{.Title}}","body":"{{.Summary}}"},"telegram":{"text":"<b>{{.Payload.attempt.target_version}}</b>\n{{.Summary}}"}}}`)
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/renderer-profiles", bytes.NewReader(createProfileBody))
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	req.Header.Set("Content-Type", "application/json")
@@ -461,7 +463,7 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 		t.Fatalf("create renderer profile expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	createDestinationBody := []byte(`{"id":"telegram-ops","type":"telegram","bot_token":"bot-token","chat_id":"-100123456789","profile":"detailed"}`)
+	createDestinationBody := []byte(`{"id":"telegram-ops","type":"telegram","bot_token":"bot-token","chat_id":"-100123456789","renderer_profiles":["watcher-deployment-failed-detailed"]}`)
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/destinations", bytes.NewReader(createDestinationBody))
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	req.Header.Set("Content-Type", "application/json")
@@ -471,7 +473,7 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 		t.Fatalf("create destination expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	createTeamsDestinationBody := []byte(`{"id":"teams-ops","type":"teams","webhook_url":"https://example.invalid/teams","profile":"detailed"}`)
+	createTeamsDestinationBody := []byte(`{"id":"teams-ops","type":"teams","webhook_url":"https://example.invalid/teams","renderer_profiles":["watcher-deployment-failed-detailed"]}`)
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/destinations", bytes.NewReader(createTeamsDestinationBody))
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	req.Header.Set("Content-Type", "application/json")
@@ -503,17 +505,24 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	rec = httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("delete destination expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("delete referenced destination expected 409, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/routes", bytes.NewReader(routeBody))
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/routes/telegram-route", nil)
 	req.Header.Set("Authorization", "Bearer admin-secret")
-	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected route validation failure after destination delete, got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete route expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/destinations/telegram-ops", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete unreferenced destination expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
 	req = httptest.NewRequest(http.MethodDelete, "/api/v1/renderer-profiles/ops-compact", nil)
@@ -931,26 +940,20 @@ func testConfig(t *testing.T) config.Config {
 		},
 		Destinations: map[string]config.DestinationConfig{
 			"slack-deployments": {
-				Type:          "slack",
-				WebhookURLEnv: "SLACK_DEPLOYMENTS_WEBHOOK_URL",
-				ResolvedURL:   "https://example.invalid",
-				Profile:       "detailed",
+				Type:             "slack",
+				WebhookURLEnv:    "SLACK_DEPLOYMENTS_WEBHOOK_URL",
+				ResolvedURL:      "https://example.invalid",
+				RendererProfiles: []string{"watcher-deployment-failed-detailed"},
 			},
 		},
 		RendererProfiles: map[string]config.ProfileConfig{
-			"detailed": {
-				Bindings: []config.ProfileBindingConfig{
-					{
-						Event: config.EventBindingConfig{
-							Source: domain.SourceWatcher,
-							Key:    "watcher.deployment.failed",
-						},
-						Templates: config.DestinationTemplates{
-							Slack: &config.SlackTemplateConfig{
-								Title: "{{.Title}}",
-								Body:  "{{.Summary}}",
-							},
-						},
+			"watcher-deployment-failed-detailed": {
+				Source: domain.SourceWatcher,
+				Key:    "watcher.deployment.failed",
+				Templates: config.DestinationTemplates{
+					Slack: &config.SlackTemplateConfig{
+						Title: "{{.Title}}",
+						Body:  "{{.Summary}}",
 					},
 				},
 			},

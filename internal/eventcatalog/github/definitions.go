@@ -76,84 +76,95 @@ func Definitions() []eventcatalog.Definition {
 			Source:         domain.SourceGitHub,
 			PayloadVersion: PayloadVersionV1,
 			Summary:        "GitHub pull request opened event.",
-			TemplatePaths:  []string{".Payload.repository", ".Payload.pull_request", ".Payload.sender"},
-			Fields: []eventcatalog.Field{
-				{Path: "repository", Type: "object", Required: true, Description: "Repository identity and canonical URLs."},
-				{Path: "pull_request", Type: "object", Required: true, Description: "Pull request number, title, branches, and status."},
-				{Path: "sender", Type: "object", Description: "Actor identity from the webhook."},
-			},
+			Fields:         pullRequestFields(),
 		},
 		{
 			Key:            eventcatalog.Key(EventPullRequestMerged),
 			Source:         domain.SourceGitHub,
 			PayloadVersion: PayloadVersionV1,
 			Summary:        "GitHub pull request merged event.",
-			TemplatePaths:  []string{".Payload.repository", ".Payload.pull_request", ".Payload.sender"},
-			Fields: []eventcatalog.Field{
-				{Path: "repository", Type: "object", Required: true},
-				{Path: "pull_request", Type: "object", Required: true},
-				{Path: "sender", Type: "object"},
-			},
+			Fields:         pullRequestFields(),
 		},
 		{
 			Key:            eventcatalog.Key(EventPullRequestClosed),
 			Source:         domain.SourceGitHub,
 			PayloadVersion: PayloadVersionV1,
 			Summary:        "GitHub pull request closed without merge.",
-			TemplatePaths:  []string{".Payload.repository", ".Payload.pull_request", ".Payload.sender"},
-			Fields: []eventcatalog.Field{
-				{Path: "repository", Type: "object", Required: true},
-				{Path: "pull_request", Type: "object", Required: true},
-				{Path: "sender", Type: "object"},
-			},
+			Fields:         pullRequestFields(),
 		},
 		{
 			Key:            eventcatalog.Key(EventWorkflowSucceeded),
 			Source:         domain.SourceGitHub,
 			PayloadVersion: PayloadVersionV1,
 			Summary:        "GitHub workflow run completed successfully.",
-			TemplatePaths:  []string{".Payload.repository", ".Payload.workflow_run", ".Payload.sender"},
-			Fields: []eventcatalog.Field{
-				{Path: "repository", Type: "object", Required: true},
-				{Path: "workflow_run", Type: "object", Required: true},
-				{Path: "sender", Type: "object"},
-			},
+			Fields:         workflowFields(),
 		},
 		{
 			Key:            eventcatalog.Key(EventWorkflowFailed),
 			Source:         domain.SourceGitHub,
 			PayloadVersion: PayloadVersionV1,
 			Summary:        "GitHub workflow run failed.",
-			TemplatePaths:  []string{".Payload.repository", ".Payload.workflow_run", ".Payload.sender"},
-			Fields: []eventcatalog.Field{
-				{Path: "repository", Type: "object", Required: true},
-				{Path: "workflow_run", Type: "object", Required: true},
-				{Path: "sender", Type: "object"},
-			},
+			Fields:         workflowFields(),
 		},
 		{
 			Key:            eventcatalog.Key(EventWorkflowCancelled),
 			Source:         domain.SourceGitHub,
 			PayloadVersion: PayloadVersionV1,
 			Summary:        "GitHub workflow run was cancelled.",
-			TemplatePaths:  []string{".Payload.repository", ".Payload.workflow_run", ".Payload.sender"},
-			Fields: []eventcatalog.Field{
-				{Path: "repository", Type: "object", Required: true},
-				{Path: "workflow_run", Type: "object", Required: true},
-				{Path: "sender", Type: "object"},
-			},
+			Fields:         workflowFields(),
 		},
 		{
 			Key:            eventcatalog.Key(EventReleasePublished),
 			Source:         domain.SourceGitHub,
 			PayloadVersion: PayloadVersionV1,
 			Summary:        "GitHub release published event.",
-			TemplatePaths:  []string{".Payload.repository", ".Payload.release", ".Payload.sender"},
-			Fields: []eventcatalog.Field{
-				{Path: "repository", Type: "object", Required: true},
-				{Path: "release", Type: "object", Required: true},
-				{Path: "sender", Type: "object"},
-			},
+			Fields:         releaseFields(),
 		},
 	}
+}
+
+func baseFields() []eventcatalog.Field {
+	return []eventcatalog.Field{
+		{Path: "repository", Type: "object", Required: true, Description: "Repository identity and canonical URLs."},
+		{Path: "repository.full_name", Type: "string", Required: true, Description: "Repository full name."},
+		{Path: "repository.html_url", Type: "string", Required: true, Description: "Repository URL."},
+		{Path: "sender", Type: "object", Description: "Actor identity from the webhook."},
+		{Path: "sender.login", Type: "string", Description: "Actor login."},
+	}
+}
+
+func pullRequestFields() []eventcatalog.Field {
+	return append(baseFields(),
+		eventcatalog.Field{Path: "pull_request", Type: "object", Required: true, Description: "Pull request number, title, branches, and status."},
+		eventcatalog.Field{Path: "pull_request.number", Type: "number", Required: true, Description: "Pull request number."},
+		eventcatalog.Field{Path: "pull_request.title", Type: "string", Required: true, Description: "Pull request title."},
+		eventcatalog.Field{Path: "pull_request.html_url", Type: "string", Required: true, Description: "Pull request URL."},
+		eventcatalog.Field{Path: "pull_request.merged", Type: "boolean", Description: "Whether the pull request was merged."},
+		eventcatalog.Field{Path: "pull_request.head_branch", Type: "string", Description: "Head branch."},
+		eventcatalog.Field{Path: "pull_request.head_sha", Type: "string", Description: "Head SHA."},
+		eventcatalog.Field{Path: "pull_request.base_branch", Type: "string", Description: "Base branch."},
+		eventcatalog.Field{Path: "pull_request.action", Type: "string", Description: "Pull request action."},
+	)
+}
+
+func workflowFields() []eventcatalog.Field {
+	return append(baseFields(),
+		eventcatalog.Field{Path: "workflow_run", Type: "object", Required: true, Description: "Workflow run metadata."},
+		eventcatalog.Field{Path: "workflow_run.name", Type: "string", Required: true, Description: "Workflow name."},
+		eventcatalog.Field{Path: "workflow_run.html_url", Type: "string", Required: true, Description: "Workflow run URL."},
+		eventcatalog.Field{Path: "workflow_run.conclusion", Type: "string", Required: true, Description: "Workflow conclusion."},
+		eventcatalog.Field{Path: "workflow_run.head_branch", Type: "string", Description: "Head branch."},
+		eventcatalog.Field{Path: "workflow_run.head_sha", Type: "string", Description: "Head SHA."},
+		eventcatalog.Field{Path: "workflow_run.run_number", Type: "number", Description: "Run number."},
+		eventcatalog.Field{Path: "workflow_run.action", Type: "string", Description: "Workflow action."},
+	)
+}
+
+func releaseFields() []eventcatalog.Field {
+	return append(baseFields(),
+		eventcatalog.Field{Path: "release", Type: "object", Required: true, Description: "Release metadata."},
+		eventcatalog.Field{Path: "release.tag_name", Type: "string", Required: true, Description: "Release tag name."},
+		eventcatalog.Field{Path: "release.name", Type: "string", Description: "Release display name."},
+		eventcatalog.Field{Path: "release.html_url", Type: "string", Required: true, Description: "Release URL."},
+	)
 }

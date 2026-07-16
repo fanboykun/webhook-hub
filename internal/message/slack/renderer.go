@@ -29,7 +29,7 @@ func (r *Renderer) Render(_ context.Context, event domain.Event, destination dom
 			{
 				"type": "context",
 				"elements": []map[string]string{
-					{"type": "mrkdwn", "text": fmt.Sprintf("service=%s env=%s profile=%s", event.Scope.Service, event.Scope.Environment, destination.Profile)},
+					{"type": "mrkdwn", "text": fmt.Sprintf("service=%s env=%s profile=%s", event.Scope.Service, event.Scope.Environment, destination.SelectedProfile)},
 				},
 			},
 		},

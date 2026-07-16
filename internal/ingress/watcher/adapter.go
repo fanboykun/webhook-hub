@@ -200,6 +200,13 @@ func (a *Adapter) Normalize(_ context.Context, integrationID string, _ config.In
 	url := firstNonEmpty(p.LegacyURL, p.Service.HealthCheckURL)
 	sourceEventID := firstNonEmpty(p.EventID, p.LegacyID, req.Headers.Get(headerEventID))
 	sourceDeliveryID := firstNonEmpty(req.Headers.Get(headerWebhookID), req.Headers.Get(headerDeliveryID), sourceEventID, sourceEventID+":"+eventType)
+	if !watchercatalog.IsKnown(watchercatalog.Key(eventType)) {
+		return ingress.AdapterResult{
+			SourceDeliveryID: sourceDeliveryID,
+			SourceEventType:  eventType,
+			IgnoreReason:     "watcher event is not supported",
+		}, nil
+	}
 
 	input := watchercatalog.ProjectionInput{
 		IntegrationID:     integrationID,
@@ -223,12 +230,20 @@ func (a *Adapter) Normalize(_ context.Context, integrationID string, _ config.In
 	}
 	if service := watcherServiceDetails(p); service != nil {
 		input.Service = service
+	} else if p.LegacyService != "" {
+		input.Service = &watchercatalog.ServiceDetails{Name: p.LegacyService}
 	}
 	if version := watcherVersionDetails(p); version != nil {
 		input.Version = version
 	}
 	if attempt := watcherAttemptDetails(p); attempt != nil {
 		input.Attempt = attempt
+	} else if p.LegacyVersion != "" || p.LegacyError.Stage != "" || p.LegacyError.Message != "" {
+		input.Attempt = &watchercatalog.AttemptDetails{
+			TargetVersion: p.LegacyVersion,
+			FailurePhase:  p.LegacyError.Stage,
+			Error:         p.LegacyError.Message,
+		}
 	}
 	if health := watcherHealthDetails(p); health != nil {
 		input.Health = health

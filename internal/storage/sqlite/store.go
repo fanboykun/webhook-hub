@@ -20,6 +20,65 @@ type Store struct {
 
 var ErrEncryptionUnavailable = errors.New("dynamic config encryption is not configured")
 
+func (s *Store) SeedDynamicConfig(ctx context.Context, integrations []domain.ManagedIntegration, destinations []domain.ManagedDestination, profiles []domain.ManagedRendererProfile, routes []domain.Route) error {
+	integrationModels := make([]integrationModel, 0, len(integrations))
+	for _, integration := range integrations {
+		model, err := s.toIntegrationModel(integration)
+		if err != nil {
+			return err
+		}
+		integrationModels = append(integrationModels, model)
+	}
+	destinationModels := make([]destinationModel, 0, len(destinations))
+	for _, destination := range destinations {
+		model, err := s.toDestinationModel(destination)
+		if err != nil {
+			return err
+		}
+		destinationModels = append(destinationModels, model)
+	}
+	profileModels := make([]rendererProfileModel, 0, len(profiles))
+	for _, profile := range profiles {
+		model, err := s.toRendererProfileModel(profile)
+		if err != nil {
+			return err
+		}
+		profileModels = append(profileModels, model)
+	}
+	routeModels := make([]routeModel, 0, len(routes))
+	for _, route := range routes {
+		model, err := toRouteModel(route)
+		if err != nil {
+			return err
+		}
+		routeModels = append(routeModels, model)
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := seedModelsIfEmpty(tx, &integrationModel{}, integrationModels); err != nil {
+			return err
+		}
+		if err := seedModelsIfEmpty(tx, &destinationModel{}, destinationModels); err != nil {
+			return err
+		}
+		if err := seedModelsIfEmpty(tx, &rendererProfileModel{}, profileModels); err != nil {
+			return err
+		}
+		return seedModelsIfEmpty(tx, &routeModel{}, routeModels)
+	})
+}
+
+func seedModelsIfEmpty[T any](tx *gorm.DB, model *T, seeds []T) error {
+	var count int64
+	if err := tx.Model(model).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 || len(seeds) == 0 {
+		return nil
+	}
+	return tx.Create(&seeds).Error
+}
+
 func (s *Store) Ingest(ctx context.Context, batch domain.IngestBatch) (domain.IngestResult, error) {
 	if err := validateIngestBatch(batch); err != nil {
 		return domain.IngestResult{}, err
@@ -189,6 +248,17 @@ func (s *Store) DeleteDestination(ctx context.Context, id string) error {
 		return ErrEncryptionUnavailable
 	}
 	return s.db.WithContext(ctx).Delete(&destinationModel{}, "id = ?", id).Error
+}
+
+func (s *Store) HasActiveDeliveriesForDestination(ctx context.Context, id string) (bool, error) {
+	var count int64
+	err := s.db.WithContext(ctx).Model(&deliveryModel{}).
+		Where("destination_id = ? AND status IN ?", id, []string{
+			string(domain.DeliveryPending),
+			string(domain.DeliveryProcessing),
+			string(domain.DeliveryRetryWait),
+		}).Count(&count).Error
+	return count > 0, err
 }
 
 func (s *Store) ListRendererProfiles(ctx context.Context) ([]domain.ManagedRendererProfile, error) {
@@ -510,11 +580,11 @@ func (s *Store) toDomainIntegration(in integrationModel) (domain.ManagedIntegrat
 }
 
 type destinationPayload struct {
-	WebhookURL string `json:"webhook_url,omitempty"`
-	BotToken   string `json:"bot_token,omitempty"`
-	ChatID     string `json:"chat_id,omitempty"`
-	APIBaseURL string `json:"api_base_url,omitempty"`
-	Profile    string `json:"profile,omitempty"`
+	WebhookURL       string   `json:"webhook_url,omitempty"`
+	BotToken         string   `json:"bot_token,omitempty"`
+	ChatID           string   `json:"chat_id,omitempty"`
+	APIBaseURL       string   `json:"api_base_url,omitempty"`
+	RendererProfiles []string `json:"renderer_profiles,omitempty"`
 }
 
 func (s *Store) toDestinationModel(in domain.ManagedDestination) (destinationModel, error) {
@@ -522,11 +592,11 @@ func (s *Store) toDestinationModel(in domain.ManagedDestination) (destinationMod
 		return destinationModel{}, ErrEncryptionUnavailable
 	}
 	payload, err := json.Marshal(destinationPayload{
-		WebhookURL: in.WebhookURL,
-		BotToken:   in.BotToken,
-		ChatID:     in.ChatID,
-		APIBaseURL: in.APIBaseURL,
-		Profile:    in.Profile,
+		WebhookURL:       in.WebhookURL,
+		BotToken:         in.BotToken,
+		ChatID:           in.ChatID,
+		APIBaseURL:       in.APIBaseURL,
+		RendererProfiles: append([]string(nil), in.RendererProfiles...),
 	})
 	if err != nil {
 		return destinationModel{}, err
@@ -554,20 +624,23 @@ func (s *Store) toDomainDestination(in destinationModel) (domain.ManagedDestinat
 		return domain.ManagedDestination{}, err
 	}
 	return domain.ManagedDestination{
-		ID:         in.ID,
-		Type:       domain.DestinationType(in.Type),
-		WebhookURL: payload.WebhookURL,
-		BotToken:   payload.BotToken,
-		ChatID:     payload.ChatID,
-		APIBaseURL: payload.APIBaseURL,
-		Profile:    payload.Profile,
-		CreatedAt:  in.CreatedAt,
-		UpdatedAt:  in.UpdatedAt,
+		ID:               in.ID,
+		Type:             domain.DestinationType(in.Type),
+		WebhookURL:       payload.WebhookURL,
+		BotToken:         payload.BotToken,
+		ChatID:           payload.ChatID,
+		APIBaseURL:       payload.APIBaseURL,
+		RendererProfiles: append([]string(nil), payload.RendererProfiles...),
+		CreatedAt:        in.CreatedAt,
+		UpdatedAt:        in.UpdatedAt,
 	}, nil
 }
 
 func (s *Store) toRendererProfileModel(in domain.ManagedRendererProfile) (rendererProfileModel, error) {
-	profileJSON, err := json.Marshal(in.Profile)
+	profileJSON, err := json.Marshal(rendererProfilePayload{
+		Version: 1,
+		Profile: in.Profile,
+	})
 	if err != nil {
 		return rendererProfileModel{}, err
 	}
@@ -580,16 +653,24 @@ func (s *Store) toRendererProfileModel(in domain.ManagedRendererProfile) (render
 }
 
 func (s *Store) toDomainRendererProfile(in rendererProfileModel) (domain.ManagedRendererProfile, error) {
-	var profile domain.RendererProfile
-	if err := json.Unmarshal(in.ProfileJSON, &profile); err != nil {
+	var payload rendererProfilePayload
+	if err := json.Unmarshal(in.ProfileJSON, &payload); err != nil {
 		return domain.ManagedRendererProfile{}, err
+	}
+	if payload.Version != 1 {
+		return domain.ManagedRendererProfile{}, fmt.Errorf("renderer profile %q has unsupported payload version %d", in.ID, payload.Version)
 	}
 	return domain.ManagedRendererProfile{
 		ID:        in.ID,
-		Profile:   profile,
+		Profile:   payload.Profile,
 		CreatedAt: in.CreatedAt,
 		UpdatedAt: in.UpdatedAt,
 	}, nil
+}
+
+type rendererProfilePayload struct {
+	Version int                    `json:"version"`
+	Profile domain.RendererProfile `json:"profile"`
 }
 
 func (s *Store) ClaimDueDeliveries(ctx context.Context, claim domain.ClaimRequest) ([]domain.DeliveryEnvelope, error) {

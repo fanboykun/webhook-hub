@@ -45,6 +45,7 @@ The package architecture follows a strict layout designed to isolate ingestion, 
 │   ├── ingress/             # Webhook validation, signature checks, and adapter registry
 │   ├── message/             # Custom template-driven and fallback message renderers
 │   ├── observability/       # Structured slog JSON/Text initialization
+│   ├── renderprofile/       # Strict event-contract template compiler
 │   ├── routing/             # Engine matching events against additive routing selectors
 │   ├── runtimeconfig/       # Streamlined in-memory hot-reload registries for configurations
 │   ├── sender/              # Slack, Telegram, and Teams client transports
@@ -54,15 +55,20 @@ The package architecture follows a strict layout designed to isolate ingestion, 
 
 ---
 
-## 3. Working Tree Status (Branch `ref`)
+## 3. Working Tree Status (Branch `main`)
 
-The working tree represents a successfully refactored codebase addressing the **Phase 7 (PRD #9)** requirements with new metadata guidelines:
-*   **Compilation & Tests:** The codebase compiles and passes the entire test suite (`go test ./...` exits with code 0).
+The working tree contains the production-hardening correction for the **Phase 7 (PRD #9)** renderer and event contracts:
+*   **Compilation & Tests:** The codebase compiles and the complete race suite passes (`go test -race ./...`).
 *   **Formatting:** All files are formatted according to standard Go styling guidelines.
-*   **SQLite Migrations:** Fully versioned migrations (`001_initial.sql` to `008_event_routing_trace_and_payload_version.sql`) are applied on startup.
+*   **SQLite Migrations:** Fully versioned migrations (`001_initial.sql` to `009_reset_unshipped_renderer_contract.sql`) are applied on startup. Migration 009 intentionally clears unshipped notification, route, destination, and renderer-profile data so the incompatible old profile shape cannot survive an upgrade; configured defaults repopulate the empty dynamic tables during the same startup.
+*   **Migration 009 Review:** Migration 009 contains no schema change; it only purges development data written under the discarded renderer contract. Because the service is unshipped and clean database recreation is acceptable, it is a removal candidate rather than a required production migration. Removal is pending confirmation and must include the ADR/design references; any developer database that already recorded 009 should also be recreated before its version number is reused.
 *   **Guidelines Enforcement:** Adjusted `AGENTS.md` and `CONTEXT.md` to make context tracking and ADR documentation mandatory.
-*   **Release Workflow:** Issue #15 is implemented locally with `.github/workflows/release.yml`, producing a Windows amd64 `webhook-hub.exe` zip plus Watcher `version.json` manifest. ADR-0009 records the release-contract decision.
-*   **Teams Destination:** Issue #16 is implemented locally with `type: teams`, Teams MessageCard fallback rendering, Teams sender retry classification, renderer-profile `teams.title` / `teams.body` templates, example config, and ADR-0010. Verification on 2026-07-16: `go test ./...`, `git diff --check`, and the Windows amd64 version-stamped build all pass; the build still emits only the sandbox read-only module stat-cache warning.
+*   **Release Workflow:** Issue #15 is committed in `5418fdb`; it produces a Windows amd64 archive and Watcher `version.json` manifest. ADR-0009 records the release contract.
+*   **Event Contracts:** Watcher definitions are event-specific. Ingress enforces payload version, required paths, JSON types, unknown-field rejection, and absolute HTTP(S) source links before persistence; optional fields are materialized deterministically for rendering.
+*   **Renderer Profiles:** Issues #13 and #16 remain open as requested, but the local implementation now uses destination profile lists with one uniquely named profile per source/event. Profiles compile once through `internal/renderprofile`, reject dynamic template bypasses, escape provider-controlled values, and enforce provider output limits. ADR-0011 and ADR-0012 record the model.
+*   **Dynamic Safety:** Typed integration, destination, renderer-profile, and route defaults seed their corresponding empty SQLite tables in one startup transaction. Non-empty tables remain operator-owned. Bootstrap validates and publishes all persisted registries plus routes before HTTP or workers start; invalid persisted routes leave the previous routing snapshot untouched. CRUD writes are serialized; referenced profiles and destinations return `409`; active deliveries prevent destination deletion; historical deliveries cannot be retried after destination removal. ADR-0013 records this contract.
+*   **Worker Concurrency:** `workers.concurrency` starts the configured number of independently leased schedulers, with one separate lease-recovery loop.
+*   **Current Verification:** On 2026-07-16, `go test -race ./...`, `go vet ./...`, `git diff --check`, and the Windows amd64 version-stamped build passed. The Windows build emitted only the known read-only Go module stat-cache warning.
 
 ---
 
@@ -94,7 +100,6 @@ These items represent the outstanding tasks required to complete Version 1 devel
 | Task | Target Package | Goal / Requirement |
 |---|---|---|
 | **Moving Profile Validation** | `internal/app/validation.go` | Shift profile check out of `internal/config/config.go` to eliminate coupling between parsing and the event registry catalog. |
-| **Outbox Semaphore Concurrency** | `internal/delivery/runner.go` | Refactor the sequential scheduler loop to process claimed envelopes concurrently using a bounded pool based on `workers.concurrency`. |
 | **Retry-After Rate Limiting** | `internal/sender/` | Extract `Retry-After` headers on Slack/Telegram/Teams 429 rate limit exceptions, scheduling `NextAttemptAt = now + Retry-After`. |
 | **Sanitize Email Schema** | `internal/config/` | Explicitly label email configuration properties as incomplete or experimental until the SMTP sender is built. |
 | **Operational status endpoint** | `internal/httpserver/` | Implement `/api/v1/status` to securely view configuration options and database state. |
@@ -108,17 +113,17 @@ Open issues inspected:
 *   **#10 Delivery correctness and operational read integrity** — local implementation has claim CAS, lease-owned completion, loud route JSON decode, receipt fan-out reads, and store tests.
 *   **#11 Event definition registry and typed event persistence** — local implementation has `internal/eventcatalog`, adapter projection, payload versioning, `payload_json`, and `route_trace_json`.
 *   **#12 App/HTTP boundary cleanup and runtime config reliability** — local implementation splits app and HTTP responsibilities, centralizes admin auth middleware, and distinguishes reload-required errors.
-*   **#13 Event-aware renderer profiles** — local implementation validates profiles against the event registry and exposes typed payload data to templates.
+*   **#13 Event-aware renderer profiles** — remains open for user review. Local corrective work now models destination profile lists with one named profile per source/event, enforces event payload contracts, and precompiles restricted templates.
 *   **#15 Create Release Workflow** — implemented with Watcher-compatible release packaging and manifest generation.
-*   **#16 add microsoft teams webhook destinations** — implemented locally with a provider-specific Teams sender and renderer using encrypted webhook URL destinations.
+*   **#16 add microsoft teams webhook destinations** — remains open for user review. Teams templates now use the same corrected event-specific profile compiler, recursive escaping, output limits, and destination/profile validation as Slack and Telegram.
 
 Branch audit after the issue sweep:
 
-*   Current checkout is `main` at `cb3d628`, matching `origin/main`.
+*   Current checkout is `main` at `5418fdb`, matching `origin/main`.
 *   No local branches have commits missing from `main` (`git branch --no-merged main` is empty).
 *   `codex-dynamic-integrations-destinations`, `feat/configurable-renderer`, `feat/configurable-renderer-apis`, and `subagent-Configurable-Renderer-Developer-self-eec407a4` are all merged ancestors of `main`.
 *   The `feat/configurable-renderer-apis` auxiliary worktree has one uncommitted edit in `internal/app/service.go` adding old renderer profile list/preview helpers. That edit is based on the pre-redesign service shape and does not directly apply to current `main` without redesign.
-*   The release workflow changes from issue #15 are local working-tree changes on top of `main`, not yet committed. Verification on 2026-07-16: `go test ./...` passes, `git diff --check` passes, and `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-X main.Version=v0.0.0-test" -o /tmp/webhook-hub.exe ./cmd/gateway` succeeds with only a sandbox read-only module stat-cache warning.
+*   Issue #15 release workflow changes are already committed in `5418fdb` and should remain closed. Corrective renderer-profile work is currently uncommitted local working-tree state on top of `main`.
 
 ---
 

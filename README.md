@@ -11,7 +11,7 @@ Version 1 is intentionally opinionated:
 - Durable SQLite inbox/outbox using explicit migrations.
 - In-process scheduler and delivery workers.
 - At-least-once outbound delivery.
-- Configuration-defined integrations and destinations, plus admin-managed live routes.
+- Configuration-defined startup defaults for integrations, destinations, renderer profiles, and routes; SQLite-backed admin changes remain authoritative after seeding.
 
 ## Problem Shape
 
@@ -110,7 +110,7 @@ Docs and health:
 - SQLite is the durable inbox/outbox for version 1, which means one active application instance owns the database.
 - Huma webhook operations are retained because raw-body verification and OpenAPI generation can coexist.
 - Routing is additive; duplicate destination matches collapse into a single delivery row per event and destination.
-- Built-in renderers remain the fallback baseline, with optional event-scoped profile bindings layered on top and managed live through the admin API.
+- Built-in renderers remain the fallback baseline. Destinations can select named profiles that each target one source/event contract; templates are compiled and validated against that event's typed payload before they enter the live registry.
 
 ## Repository Direction
 
