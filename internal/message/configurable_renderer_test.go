@@ -148,6 +148,10 @@ func TestGoldenIntegration(t *testing.T) {
 						Telegram: &domain.TelegramTemplate{
 							Text: "<b>[{{.Severity}}] {{.Title}}</b>\nService: {{.Service}}",
 						},
+						Teams: &domain.TeamsTemplate{
+							Title: "[{{.Severity}}] {{.Title}}",
+							Body:  "**Service:** {{.Service}}\n\n{{.Summary}}",
+						},
 					},
 				},
 				{
@@ -159,6 +163,10 @@ func TestGoldenIntegration(t *testing.T) {
 						},
 						Telegram: &domain.TelegramTemplate{
 							Text: "🚨 <b>{{.Title}} ({{.Lifecycle}})</b> 🚨\nEnvironment: <b>{{.Environment}}</b>\nService: <code>{{.Service}}</code>\nRelease: <code>{{ index .Metadata \"release\" }}</code>\nSummary: <i>{{.Summary}}</i>\n<a href=\"{{.SourceURL}}\">View Details</a>",
+						},
+						Teams: &domain.TeamsTemplate{
+							Title: "CRITICAL ALERT: {{.Title}} failed in {{.Environment}}",
+							Body:  "**Service:** {{.Service}}\n\n**Release:** {{ index .Metadata \"release\" }}\n\n{{.Summary}}",
 						},
 					},
 				},
@@ -209,6 +217,16 @@ func TestGoldenIntegration(t *testing.T) {
 			name:        "Telegram Templated Override",
 			destination: domain.Destination{ID: "telegram_templated", Type: domain.DestinationTelegram, Profile: "templated-profile"},
 			goldenFile:  "telegram_templated.html",
+		},
+		{
+			name:        "Teams Default (Fallback)",
+			destination: domain.Destination{ID: "teams_fallback", Type: domain.DestinationTeams, Profile: ""},
+			goldenFile:  "teams_fallback.json",
+		},
+		{
+			name:        "Teams Templated Override",
+			destination: domain.Destination{ID: "teams_templated", Type: domain.DestinationTeams, Profile: "templated-profile"},
+			goldenFile:  "teams_templated.json",
 		},
 	}
 

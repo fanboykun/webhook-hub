@@ -46,6 +46,7 @@ type EventBindingConfig struct {
 type DestinationTemplates struct {
 	Slack    *SlackTemplateConfig    `mapstructure:"slack"`
 	Telegram *TelegramTemplateConfig `mapstructure:"telegram"`
+	Teams    *TeamsTemplateConfig    `mapstructure:"teams"`
 	Email    *EmailTemplateConfig    `mapstructure:"email"`
 }
 
@@ -56,6 +57,11 @@ type SlackTemplateConfig struct {
 
 type TelegramTemplateConfig struct {
 	Text string `mapstructure:"text"`
+}
+
+type TeamsTemplateConfig struct {
+	Title string `mapstructure:"title"`
+	Body  string `mapstructure:"body"`
 }
 
 type EmailTemplateConfig struct {
@@ -233,7 +239,7 @@ func (c *Config) resolveSecrets() error {
 
 	for id, destination := range c.Destinations {
 		switch destination.Type {
-		case domain.DestinationSlack:
+		case domain.DestinationSlack, domain.DestinationTeams:
 			value, key, err := resolveSecretValue(destination.WebhookURLEnv)
 			if err != nil {
 				return fmt.Errorf("destination %q webhook env %q: %w", id, key, err)
@@ -294,7 +300,7 @@ func (c Config) Validate() error {
 
 	for id, destination := range c.Destinations {
 		switch destination.Type {
-		case domain.DestinationSlack:
+		case domain.DestinationSlack, domain.DestinationTeams:
 			if strings.TrimSpace(destination.WebhookURLEnv) == "" {
 				errs = append(errs, fmt.Errorf("destination %q webhook_url_env is required", id))
 			}
@@ -363,7 +369,7 @@ func (c *Config) ValidateRendererProfiles() error {
 
 func validateDestinationTemplates(dt DestinationTemplates) error {
 	var errs []error
-	if dt.Slack == nil && dt.Telegram == nil && dt.Email == nil {
+	if dt.Slack == nil && dt.Telegram == nil && dt.Teams == nil && dt.Email == nil {
 		errs = append(errs, errors.New("at least one destination template is required"))
 	}
 	if dt.Slack != nil {
@@ -377,6 +383,14 @@ func validateDestinationTemplates(dt DestinationTemplates) error {
 	if dt.Telegram != nil {
 		if err := ValidateTemplate(dt.Telegram.Text); err != nil {
 			errs = append(errs, fmt.Errorf("telegram text: %w", err))
+		}
+	}
+	if dt.Teams != nil {
+		if err := ValidateTemplate(dt.Teams.Title); err != nil {
+			errs = append(errs, fmt.Errorf("teams title: %w", err))
+		}
+		if err := ValidateTemplate(dt.Teams.Body); err != nil {
+			errs = append(errs, fmt.Errorf("teams body: %w", err))
 		}
 	}
 	if dt.Email != nil {

@@ -65,9 +65,9 @@ func (s *Service) validateDestination(destination domain.ManagedDestination) err
 		return errors.New("destination id is required")
 	}
 	switch destination.Type {
-	case domain.DestinationSlack:
+	case domain.DestinationSlack, domain.DestinationTeams:
 		if strings.TrimSpace(destination.WebhookURL) == "" {
-			return errors.New("slack destination webhook_url is required")
+			return fmt.Errorf("%s destination webhook_url is required", destination.Type)
 		}
 	case domain.DestinationTelegram:
 		if strings.TrimSpace(destination.BotToken) == "" {

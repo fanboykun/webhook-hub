@@ -22,6 +22,8 @@ import (
 	"github.com/fanboykun/webhook-hub/internal/storage/sqlite"
 )
 
+var Version = "dev"
+
 func main() {
 	cfg, err := config.LoadFromEnv()
 	if err != nil {
@@ -87,7 +89,7 @@ func main() {
 	}()
 	deliveryRunner.Start(ctx, "worker-1")
 
-	apiLogger.Info("server.started", "address", cfg.Server.Address)
+	apiLogger.Info("server.started", "address", cfg.Server.Address, "version", Version)
 	if err := server.Run(); err != nil {
 		apiLogger.Error("server.stopped", "error", err)
 	}

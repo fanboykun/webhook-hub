@@ -286,6 +286,7 @@ func (destinationConfigModel) Schema(r huma.Registry) *huma.Schema {
 		map[string]reflect.Type{
 			string(domain.DestinationSlack):    reflect.TypeOf(slackDestinationModel{}),
 			string(domain.DestinationTelegram): reflect.TypeOf(telegramDestinationModel{}),
+			string(domain.DestinationTeams):    reflect.TypeOf(teamsDestinationModel{}),
 		},
 	)
 }
@@ -307,6 +308,7 @@ func (destinationRequestModel) Schema(r huma.Registry) *huma.Schema {
 		map[string]reflect.Type{
 			string(domain.DestinationSlack):    reflect.TypeOf(slackDestinationRequestModel{}),
 			string(domain.DestinationTelegram): reflect.TypeOf(telegramDestinationRequestModel{}),
+			string(domain.DestinationTeams):    reflect.TypeOf(teamsDestinationRequestModel{}),
 		},
 	)
 }
@@ -361,6 +363,15 @@ type telegramDestinationModel struct {
 	UpdatedAt  time.Time            `json:"updated_at,omitempty" doc:"When the Telegram destination was last updated."`
 }
 
+type teamsDestinationModel struct {
+	ID         string               `json:"id" doc:"Stable operator-defined destination identifier." example:"teams-oncall"`
+	Type       routeDestinationType `json:"type" enum:"teams" doc:"Discriminator for the Microsoft Teams webhook sender."`
+	WebhookURL string               `json:"webhook_url,omitempty" doc:"Redacted Microsoft Teams incoming webhook URL used for outgoing sends." example:"[REDACTED]"`
+	Profile    string               `json:"profile,omitempty" doc:"Optional renderer profile slug applied before sending to Teams." example:"detailed"`
+	CreatedAt  time.Time            `json:"created_at,omitempty" doc:"When the Teams destination was created."`
+	UpdatedAt  time.Time            `json:"updated_at,omitempty" doc:"When the Teams destination was last updated."`
+}
+
 type slackDestinationRequestModel struct {
 	ID         string               `json:"id" doc:"Stable operator-defined destination identifier." example:"slack-deployments"`
 	Type       routeDestinationType `json:"type" enum:"slack" doc:"Discriminator for the Slack sender."`
@@ -408,8 +419,15 @@ type integrationResponse struct {
 	Body integrationModel
 }
 
+type teamsDestinationRequestModel struct {
+	ID         string               `json:"id" doc:"Stable operator-defined destination identifier." example:"teams-oncall"`
+	Type       routeDestinationType `json:"type" enum:"teams" doc:"Discriminator for the Microsoft Teams webhook sender."`
+	WebhookURL string               `json:"webhook_url,omitempty" doc:"Microsoft Teams incoming webhook URL used for outgoing sends." example:"https://example.webhook.office.com/webhookb2/..."`
+	Profile    string               `json:"profile,omitempty" doc:"Optional renderer profile slug applied before sending to Teams." example:"detailed"`
+}
+
 type listDestinationsInput struct {
-	Type routeDestinationType `query:"type" doc:"Filter by destination type such as slack or telegram."`
+	Type routeDestinationType `query:"type" doc:"Filter by destination type such as slack, telegram, or teams."`
 }
 
 type destinationDetailInput struct {
@@ -464,6 +482,7 @@ type rendererEventRefModel struct {
 type rendererTemplatesModel struct {
 	Slack    *rendererSlackTemplateModel    `json:"slack,omitempty" doc:"Optional Slack template pair for this scope."`
 	Telegram *rendererTelegramTemplateModel `json:"telegram,omitempty" doc:"Optional Telegram template for this scope."`
+	Teams    *rendererTeamsTemplateModel    `json:"teams,omitempty" doc:"Optional Microsoft Teams template pair for this scope."`
 	Email    *rendererEmailTemplateModel    `json:"email,omitempty" doc:"Optional email template pair for this scope."`
 }
 
@@ -474,6 +493,11 @@ type rendererSlackTemplateModel struct {
 
 type rendererTelegramTemplateModel struct {
 	Text string `json:"text,omitempty" doc:"Go template for the Telegram HTML message body." example:"<b>{{.Title}}</b>\n{{.Summary}}"`
+}
+
+type rendererTeamsTemplateModel struct {
+	Title string `json:"title,omitempty" doc:"Go template for the Microsoft Teams card title." example:"[{{.Severity}}] {{.Title}}"`
+	Body  string `json:"body,omitempty" doc:"Go template for the Microsoft Teams card body." example:"**{{.Title}}**\n\n{{.Summary}}"`
 }
 
 type rendererEmailTemplateModel struct {
@@ -695,6 +719,12 @@ func rendererTemplatesModelFromDomain(in domain.RendererDestinationTemplates) re
 	if in.Telegram != nil {
 		out.Telegram = &rendererTelegramTemplateModel{Text: in.Telegram.Text}
 	}
+	if in.Teams != nil {
+		out.Teams = &rendererTeamsTemplateModel{
+			Title: in.Teams.Title,
+			Body:  in.Teams.Body,
+		}
+	}
 	if in.Email != nil {
 		out.Email = &rendererEmailTemplateModel{
 			Subject: in.Email.Subject,
@@ -714,6 +744,12 @@ func rendererTemplatesModelToDomain(in rendererTemplatesModel) domain.RendererDe
 	}
 	if in.Telegram != nil {
 		out.Telegram = &domain.TelegramTemplate{Text: in.Telegram.Text}
+	}
+	if in.Teams != nil {
+		out.Teams = &domain.TeamsTemplate{
+			Title: in.Teams.Title,
+			Body:  in.Teams.Body,
+		}
 	}
 	if in.Email != nil {
 		out.Email = &domain.EmailTemplate{
@@ -889,6 +925,7 @@ func (routeDestinationType) Schema(r huma.Registry) *huma.Schema {
 		Enum: enumValues([]string{
 			string(domain.DestinationSlack),
 			string(domain.DestinationTelegram),
+			string(domain.DestinationTeams),
 		}),
 	}
 }

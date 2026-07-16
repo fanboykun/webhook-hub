@@ -39,6 +39,7 @@ type DestinationType string
 const (
 	DestinationSlack    DestinationType = "slack"
 	DestinationTelegram DestinationType = "telegram"
+	DestinationTeams    DestinationType = "teams"
 	DestinationEmail    DestinationType = "email"
 )
 

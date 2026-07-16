@@ -170,6 +170,25 @@ func TestValidateAcceptsTelegramGroupChatID(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsTeamsWebhookDestination(t *testing.T) {
+	cfg := Config{
+		Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
+		Database: testDatabaseConfig(),
+		Workers:  WorkersConfig{BatchSize: 1, Concurrency: 1},
+		Retry:    RetryConfig{MaxAttempts: 1},
+		Destinations: map[string]DestinationConfig{
+			"teams-oncall": {
+				Type:          domain.DestinationTeams,
+				WebhookURLEnv: "TEAMS_ONCALL_WEBHOOK_URL",
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected valid teams webhook destination, got %v", err)
+	}
+}
+
 func TestValidateRejectsInvalidTelegramChatID(t *testing.T) {
 	cfg := Config{
 		Server:   ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
@@ -219,6 +238,10 @@ func TestValidateRendererProfiles(t *testing.T) {
 									Slack: &SlackTemplateConfig{
 										Title: "[{{.Severity}}] {{.Title}}",
 										Body:  "{{.Summary}} - {{.OccurredAt.Format \"2006-01-02\"}}",
+									},
+									Teams: &TeamsTemplateConfig{
+										Title: "[{{.Severity}}] {{.Title}}",
+										Body:  "{{.Summary}}",
 									},
 								},
 							},

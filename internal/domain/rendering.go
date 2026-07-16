@@ -37,6 +37,7 @@ type RendererProfile struct {
 type RendererDestinationTemplates struct {
 	Slack    *SlackTemplate    `json:"slack,omitempty"`
 	Telegram *TelegramTemplate `json:"telegram,omitempty"`
+	Teams    *TeamsTemplate    `json:"teams,omitempty"`
 	Email    *EmailTemplate    `json:"email,omitempty"`
 }
 
@@ -47,6 +48,11 @@ type SlackTemplate struct {
 
 type TelegramTemplate struct {
 	Text string `json:"text,omitempty"`
+}
+
+type TeamsTemplate struct {
+	Title string `json:"title,omitempty"`
+	Body  string `json:"body,omitempty"`
 }
 
 type EmailTemplate struct {

@@ -471,6 +471,24 @@ func TestDynamicConfigEndpoints(t *testing.T) {
 		t.Fatalf("create destination expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
+	createTeamsDestinationBody := []byte(`{"id":"teams-ops","type":"teams","webhook_url":"https://example.invalid/teams","profile":"detailed"}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/destinations", bytes.NewReader(createTeamsDestinationBody))
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create teams destination expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	teamsDestination, err := store.GetDestination(context.Background(), "teams-ops")
+	if err != nil {
+		t.Fatalf("get teams destination failed: %v", err)
+	}
+	if teamsDestination.WebhookURL != "https://example.invalid/teams" {
+		t.Fatalf("expected teams webhook url to persist, got %q", teamsDestination.WebhookURL)
+	}
+
 	routeBody := []byte(`{"id":"telegram-route","match":{"sources":["watcher"]},"destinations":["telegram-ops"]}`)
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/routes", bytes.NewReader(routeBody))
 	req.Header.Set("Authorization", "Bearer admin-secret")

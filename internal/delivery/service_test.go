@@ -163,6 +163,81 @@ func TestProcessOnceTelegramSent(t *testing.T) {
 	}
 }
 
+func TestProcessOnceTeamsSent(t *testing.T) {
+	teams := newLoopbackTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Fatalf("unexpected teams content type: %s", r.Header.Get("Content-Type"))
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer teams.Close()
+
+	cfg := deliveryTeamsTestConfig(t, teams.URL)
+	store, err := sqlite.Open(cfg.Database, observability.NewLogger(cfg.Logging))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	now := time.Now().UTC()
+	_, err = store.Ingest(context.Background(), domain.IngestBatch{
+		Receipt: domain.Receipt{
+			ID:               "r1",
+			Source:           domain.SourceWatcher,
+			IntegrationID:    "watcher-production",
+			SourceDeliveryID: "evt-1",
+			SourceEventType:  "deployment.failed",
+			PayloadSHA256:    "abc",
+			ReceivedAt:       now,
+			Status:           domain.ReceiptAccepted,
+			CreatedAt:        now,
+		},
+		Events: []domain.Event{{
+			ID:        "e1",
+			ReceiptID: "r1",
+			EventEnvelope: domain.EventEnvelope{
+				Source:        domain.SourceWatcher,
+				IntegrationID: "watcher-production",
+				Key:           "watcher.deployment.failed",
+				Severity:      domain.SeverityError,
+				Title:         "deployment failed",
+				Summary:       "health check failed",
+				Scope: domain.EventScope{
+					Service:     "auth-service",
+					Environment: "production",
+				},
+				OccurredAt: now,
+			},
+			CreatedAt: now,
+		}},
+		DeliveryByEvent: map[string][]domain.Delivery{
+			"e1": {{
+				ID:              "d1",
+				EventID:         "e1",
+				DestinationID:   "teams-oncall",
+				DestinationType: domain.DestinationTeams,
+				Status:          domain.DeliveryPending,
+				MaxAttempts:     3,
+				NextAttemptAt:   now,
+				CreatedAt:       now,
+				UpdatedAt:       now,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("seed ingest: %v", err)
+	}
+
+	service := NewService(store, cfg, runtimeconfig.NewDestinationRegistry(cfg.Destinations), runtimeconfig.NewRendererProfileRegistry(runtimeconfig.RendererProfilesFromConfig(cfg.RendererProfiles)), clock.Real{}, observability.NewLogger(cfg.Logging))
+	claimed, err := service.ProcessOnce(context.Background(), "worker-1")
+	if err != nil {
+		t.Fatalf("process once: %v", err)
+	}
+	if claimed != 1 {
+		t.Fatalf("expected 1 claimed delivery, got %d", claimed)
+	}
+}
+
 func TestProcessOnceUsesHotReloadedDestinationRegistry(t *testing.T) {
 	firstHits := make(chan struct{}, 1)
 	first := newLoopbackTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -355,6 +430,37 @@ func deliveryTelegramTestConfig(t *testing.T, apiBaseURL string) config.Config {
 				ChatID:        "-100123456789",
 				APIBaseURL:    apiBaseURL,
 				Profile:       "compact",
+			},
+		},
+	}
+}
+
+func deliveryTeamsTestConfig(t *testing.T, webhookURL string) config.Config {
+	t.Helper()
+	return config.Config{
+		Logging: config.LoggingConfig{Format: "text"},
+		Database: config.DatabaseConfig{
+			Path:               t.TempDir() + "/gateway.db",
+			BusyTimeout:        5 * time.Second,
+			MaxOpenConnections: 1,
+			RetainRawPayloads:  true,
+		},
+		Workers: config.WorkersConfig{
+			BatchSize:     10,
+			Concurrency:   1,
+			LeaseDuration: time.Minute,
+		},
+		Retry: config.RetryConfig{
+			MaxAttempts: 3,
+			BaseDelay:   time.Second,
+			MaxDelay:    time.Minute,
+			Jitter:      0,
+		},
+		Destinations: map[string]config.DestinationConfig{
+			"teams-oncall": {
+				Type:        domain.DestinationTeams,
+				ResolvedURL: webhookURL,
+				Profile:     "detailed",
 			},
 		},
 	}

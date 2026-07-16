@@ -2,7 +2,7 @@
 
 The canonical architecture and implementation reference for this repository is [docs/design.md](./docs/design.md). This `README` is a high-signal summary for repo orientation and execution.
 
-Webhook Notification Gateway is a single-node Go service that receives operational webhooks, verifies and normalizes them, routes them through durable policy rules, persists accepted work to SQLite, and delivers notifications to Slack, Telegram, and email.
+Webhook Notification Gateway is a single-node Go service that receives operational webhooks, verifies and normalizes them, routes them through durable policy rules, persists accepted work to SQLite, and delivers notifications to Slack, Telegram, Microsoft Teams, and email.
 
 Version 1 is intentionally opinionated:
 
@@ -26,6 +26,7 @@ It then delivers routed notifications to:
 
 - Slack
 - Telegram
+- Microsoft Teams
 - Email
 
 The service is not a thin proxy. A webhook is only considered accepted after the receipt, normalized events, and initial delivery jobs are durably committed.
@@ -46,7 +47,7 @@ Included:
 - Signed webhook ingestion for Watcher, GitHub, Grafana, and Sentry.
 - Normalized internal event model.
 - Route matching backed by persisted live rules.
-- Slack, Telegram, and email delivery.
+- Slack, Telegram, Microsoft Teams, and email delivery.
 - Durable retries, dead-lettering, and delivery attempt history.
 - Operational API for event and delivery inspection.
 - Manual retry for failed deliveries.
@@ -68,6 +69,7 @@ Sources -> HTTP ingress -> source adapter -> normalized event batch
 SQLite due deliveries -> scheduler -> worker pool -> renderer -> sender
                                                   -> Slack
                                                   -> Telegram
+                                                  -> Microsoft Teams
                                                   -> Email
 ```
 

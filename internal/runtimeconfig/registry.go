@@ -237,6 +237,10 @@ func cloneDomainTemplates(in domain.RendererDestinationTemplates) domain.Rendere
 		telegram := *in.Telegram
 		out.Telegram = &telegram
 	}
+	if in.Teams != nil {
+		teams := *in.Teams
+		out.Teams = &teams
+	}
 	if in.Email != nil {
 		email := *in.Email
 		out.Email = &email
@@ -271,6 +275,12 @@ func destinationTemplatesToDomain(in config.DestinationTemplates) domain.Rendere
 	if in.Telegram != nil {
 		out.Telegram = &domain.TelegramTemplate{Text: in.Telegram.Text}
 	}
+	if in.Teams != nil {
+		out.Teams = &domain.TeamsTemplate{
+			Title: in.Teams.Title,
+			Body:  in.Teams.Body,
+		}
+	}
 	if in.Email != nil {
 		out.Email = &domain.EmailTemplate{
 			Subject: in.Email.Subject,
@@ -290,6 +300,12 @@ func destinationTemplatesFromDomain(in domain.RendererDestinationTemplates) conf
 	}
 	if in.Telegram != nil {
 		out.Telegram = &config.TelegramTemplateConfig{Text: in.Telegram.Text}
+	}
+	if in.Teams != nil {
+		out.Teams = &config.TeamsTemplateConfig{
+			Title: in.Teams.Title,
+			Body:  in.Teams.Body,
+		}
 	}
 	if in.Email != nil {
 		out.Email = &config.EmailTemplateConfig{

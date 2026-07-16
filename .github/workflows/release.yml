@@ -1,0 +1,355 @@
+name: Release Go NSSM Service
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "configs/**"
+      - "docs/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+    inputs:
+      force_bump:
+        description: "Force a specific bump (patch|minor|major). Empty manual runs default to patch."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  APP_NAME: webhook-hub
+  APP_DISPLAY_NAME: Webhook Hub
+  GO_VERSION: "1.25.6"
+  GO_PRIVATE: ""
+  WEB_BINARY: webhook-hub.exe
+  WEB_ENTRY: ./cmd/gateway
+  WINDOWS_SERVICE_NAME: webhook-hub
+  START_ARGUMENTS: ""
+  ENV_FILE: .env
+  HEALTH_CHECK_URL: http://localhost:8080/health/ready
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip ci]')
+    name: Release ${{ env.APP_DISPLAY_NAME }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Determine version bump and tag
+        id: semver
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          CURRENT_SHA: ${{ github.sha }}
+          FORCE_RAW: ${{ github.event.inputs.force_bump }}
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force origin "+refs/tags/*:refs/tags/*" >/dev/null 2>&1 || true
+
+          LATEST_TAG="$(git tag --list "v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -n 1 || true)"
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_VER="v0.0.0"
+          else
+            LATEST_VER="$LATEST_TAG"
+          fi
+
+          VERSION="${LATEST_VER#v}"
+          MAJOR="$(echo "$VERSION" | cut -d. -f1)"
+          MINOR="$(echo "$VERSION" | cut -d. -f2)"
+          PATCH="$(echo "$VERSION" | cut -d. -f3)"
+
+          COMMIT_SUBJECT="$(git log -1 --pretty=%s "$CURRENT_SHA" 2>/dev/null || true)"
+          COMMIT_BODY="$(git log -1 --pretty=%b "$CURRENT_SHA" 2>/dev/null || true)"
+          COMMIT_FULL="$(git log -1 --pretty=%B "$CURRENT_SHA" 2>/dev/null || true)"
+
+          PR_NUMBER=""
+          PR_TITLE=""
+          PR_BODY=""
+          PR_URL=""
+          PR_NUMBER="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${CURRENT_SHA}/pulls" \
+            -H "Accept: application/vnd.github+json" \
+            --jq '.[0].number // empty' 2>/dev/null || true)"
+          if [ -n "$PR_NUMBER" ]; then
+            PR_TITLE="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json title --jq '.title' 2>/dev/null || true)"
+            PR_BODY="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json body --jq '.body // ""' 2>/dev/null || true)"
+            PR_URL="https://github.com/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}"
+          fi
+
+          FORCE="$(echo "${FORCE_RAW:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
+          BUMP=""
+          if echo "$COMMIT_FULL" | grep -qiE "BREAKING[[:space:]]CHANGE|^[a-z]+(\([^)]+\))?!:"; then
+            BUMP="major"
+          elif echo "$COMMIT_SUBJECT" | grep -qiE "^feat(\([^)]+\))?:"; then
+            BUMP="minor"
+          elif echo "$COMMIT_SUBJECT" | grep -qiE "^(fix|perf|refactor)(\([^)]+\))?:"; then
+            BUMP="patch"
+          elif echo "$COMMIT_SUBJECT" | grep -qiE "^(chore|docs|ci|style|test|build)(\([^)]+\))?:"; then
+            echo "Non-releasable conventional type: $COMMIT_SUBJECT"
+          elif [ -n "$COMMIT_SUBJECT" ]; then
+            BUMP="patch"
+          fi
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -z "$FORCE" ]; then
+            FORCE="patch"
+          fi
+          if [ -n "$FORCE" ]; then
+            case "$FORCE" in
+              major|minor|patch) ;;
+              *) echo "Invalid force_bump: '$FORCE'. Allowed: patch|minor|major" >&2; exit 1 ;;
+            esac
+            BUMP="$FORCE"
+          fi
+          if [ -z "$BUMP" ]; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEW_VER="v${MAJOR}.${MINOR}.${PATCH}"
+          if git rev-parse -q --verify "refs/tags/${NEW_VER}" >/dev/null; then
+            echo "Tag $NEW_VER already exists locally; skipping create."
+          elif git ls-remote --exit-code --tags origin "refs/tags/${NEW_VER}" >/dev/null 2>&1; then
+            echo "Tag $NEW_VER already exists on origin; skipping create."
+          else
+            git tag "$NEW_VER"
+            git push origin "$NEW_VER"
+          fi
+
+          if [ -n "$PR_TITLE" ]; then
+            CHANGELOG="* PR #${PR_NUMBER}: ${PR_TITLE}"
+          elif [ -n "$COMMIT_SUBJECT" ]; then
+            CHANGELOG="* ${COMMIT_SUBJECT}"
+          else
+            CHANGELOG="* Manual ${BUMP} release"
+          fi
+
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+          echo "new_ver=$NEW_VER" >> "$GITHUB_OUTPUT"
+          echo "new_tag=$NEW_VER" >> "$GITHUB_OUTPUT"
+          echo "bump_type=$BUMP" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "pr_title=$PR_TITLE" >> "$GITHUB_OUTPUT"
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+          {
+            echo "changelog<<CHANGELOG_EOF"
+            printf "%s\n" "$CHANGELOG"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "pr_body<<PR_BODY_EOF"
+            printf "%s\n" "$PR_BODY"
+            echo "PR_BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "commit_body<<COMMIT_BODY_EOF"
+            printf "%s\n" "$COMMIT_BODY"
+            echo "COMMIT_BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        if: steps.semver.outputs.should_release == 'true'
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Configure private Go modules
+        if: steps.semver.outputs.should_release == 'true' && env.GO_PRIVATE != ''
+        env:
+          GH_ACCESS_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        run: |
+          echo "GOPRIVATE=${{ env.GO_PRIVATE }}" >> "$GITHUB_ENV"
+          git config --global url."https://${GH_ACCESS_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+      - name: Test
+        if: steps.semver.outputs.should_release == 'true'
+        run: go test ./...
+
+      - name: Build Windows amd64 binary
+        if: steps.semver.outputs.should_release == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
+            -ldflags="-X main.Version=${{ steps.semver.outputs.new_ver }}" \
+            -o "dist/${{ env.WEB_BINARY }}" \
+            "${{ env.WEB_ENTRY }}"
+          ls -lah dist
+
+      - name: Package release zip
+        id: zip
+        if: steps.semver.outputs.should_release == 'true'
+        run: |
+          set -euo pipefail
+          ZIP_NAME="${{ env.APP_NAME }}-${{ steps.semver.outputs.new_ver }}-windows-amd64.zip"
+          cd dist && zip -r "../${ZIP_NAME}" . && cd ..
+          BUNDLE_SIZE="$(du -h "${ZIP_NAME}" | cut -f1)"
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+          echo "bundle_size=${BUNDLE_SIZE}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate version.json
+        if: steps.semver.outputs.should_release == 'true'
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.semver.outputs.new_ver }}"
+          TAG="${{ steps.semver.outputs.new_tag }}"
+          ZIP_NAME="${{ steps.zip.outputs.zip_name }}"
+          REPO="${{ github.repository }}"
+          ARTIFACT_URL="https://github.com/${REPO}/releases/download/${TAG}/${ZIP_NAME}"
+          PUBLISHED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          cat > version.json <<JSON
+          {
+            "services": {
+              "${{ env.APP_NAME }}": {
+                "version": "${VERSION}",
+                "artifact": "${ZIP_NAME}",
+                "artifact_url": "${ARTIFACT_URL}",
+                "published_at": "${PUBLISHED_AT}",
+                "app_kind": "nssm",
+                "windows_service_name": "${{ env.WINDOWS_SERVICE_NAME }}",
+                "binary_name": "${{ env.WEB_BINARY }}",
+                "start_arguments": "${{ env.START_ARGUMENTS }}",
+                "env_file": "${{ env.ENV_FILE }}",
+                "health_check_url": "${{ env.HEALTH_CHECK_URL }}"
+              }
+            }
+          }
+          JSON
+          cat version.json
+
+      - name: Generate release body
+        if: steps.semver.outputs.should_release == 'true'
+        env:
+          NEW_VER: ${{ steps.semver.outputs.new_ver }}
+          NEW_TAG: ${{ steps.semver.outputs.new_tag }}
+          BUMP_TYPE: ${{ steps.semver.outputs.bump_type }}
+          ZIP_NAME: ${{ steps.zip.outputs.zip_name }}
+          CHANGELOG: ${{ steps.semver.outputs.changelog }}
+          PR_NUMBER: ${{ steps.semver.outputs.pr_number }}
+          PR_TITLE: ${{ steps.semver.outputs.pr_title }}
+          PR_URL: ${{ steps.semver.outputs.pr_url }}
+          PR_BODY: ${{ steps.semver.outputs.pr_body }}
+          COMMIT_BODY: ${{ steps.semver.outputs.commit_body }}
+          REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          ARTIFACT_URL="https://github.com/${REPO}/releases/download/${NEW_TAG}/${ZIP_NAME}"
+          VERSION_JSON_URL="https://github.com/${REPO}/releases/download/${NEW_TAG}/version.json"
+          COMMIT_URL="https://github.com/${REPO}/commit/${COMMIT_SHA}"
+          BUILD_TIME="$(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+
+          NOTES_SOURCE="Commit message"
+          NOTES_TITLE="$CHANGELOG"
+          NOTES_BODY="$COMMIT_BODY"
+          if [ -n "$PR_TITLE" ]; then
+            NOTES_SOURCE="Pull request"
+            NOTES_TITLE="* PR #${PR_NUMBER}: ${PR_TITLE}"
+            NOTES_BODY="$PR_BODY"
+          fi
+
+          {
+            echo "## What's Changed"
+            echo ""
+            printf "%s\n" "$NOTES_TITLE"
+            echo ""
+            echo "## Change Details"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Source | ${NOTES_SOURCE} |"
+            if [ -n "$PR_URL" ]; then
+              echo "| Pull request | [#${PR_NUMBER}](${PR_URL}) |"
+            fi
+            echo "| Commit | [\`${SHORT_SHA}\`](${COMMIT_URL}) |"
+            echo ""
+            if [ -n "$NOTES_BODY" ]; then
+              printf "%s\n" "$NOTES_BODY"
+            else
+              echo "_No detailed description was provided._"
+            fi
+            echo ""
+            echo "## Release Info"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| App | \`${APP_NAME}\` |"
+            echo "| Version | \`${NEW_VER}\` |"
+            echo "| Tag | \`${NEW_TAG}\` |"
+            echo "| Bump type | \`${BUMP_TYPE}\` |"
+            echo "| Built at | ${BUILD_TIME} |"
+            echo "| Runner | \`ubuntu-latest\` |"
+            echo ""
+            echo "## Artifacts"
+            echo ""
+            echo "| File | Link |"
+            echo "|------|------|"
+            echo "| Windows amd64 zip | [\`${ZIP_NAME}\`](${ARTIFACT_URL}) |"
+            echo "| Watcher metadata | [\`version.json\`](${VERSION_JSON_URL}) |"
+            echo ""
+            echo "## Watcher Integration"
+            echo ""
+            echo "Use this manifest URL in Watcher for manifest-first setup:"
+            echo ""
+            echo "\`\`\`text"
+            echo "$VERSION_JSON_URL"
+            echo "\`\`\`"
+            echo ""
+            echo "Or use repository mode with:"
+            echo ""
+            echo "\`\`\`text"
+            echo "https://github.com/${REPO}"
+            echo "\`\`\`"
+          } > RELEASE_BODY.md
+
+          cat RELEASE_BODY.md
+
+      - name: Create GitHub Release
+        if: steps.semver.outputs.should_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.semver.outputs.new_tag }}
+          name: "${{ env.APP_DISPLAY_NAME }} ${{ steps.semver.outputs.new_ver }} (${{ steps.semver.outputs.bump_type }})"
+          body_path: RELEASE_BODY.md
+          files: |
+            ${{ steps.zip.outputs.zip_name }}
+            version.json
+          make_latest: "true"
+
+      - name: Print release summary
+        if: steps.semver.outputs.should_release == 'true'
+        run: |
+          REPO="${{ github.repository }}"
+          TAG="${{ steps.semver.outputs.new_tag }}"
+          ZIP_NAME="${{ steps.zip.outputs.zip_name }}"
+          echo "Released ${{ env.APP_DISPLAY_NAME }} ${{ steps.semver.outputs.new_ver }}"
+          echo "Manifest: https://github.com/${REPO}/releases/download/${TAG}/version.json"
+          echo "Artifact: https://github.com/${REPO}/releases/download/${TAG}/${ZIP_NAME}"
+
+      - name: Nothing to release
+        if: steps.semver.outputs.should_release != 'true'
+        run: echo "No release: non-releasable conventional commit type and no force_bump."

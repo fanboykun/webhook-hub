@@ -63,6 +63,11 @@ destinations:
     chat_id: "-100123456789"
     profile: compact
 
+  teams-oncall:
+    type: teams
+    webhook_url_env: TEAMS_ONCALL_WEBHOOK_URL
+    profile: detailed
+
 renderer_profiles:
   detailed:
     bindings:
@@ -75,6 +80,9 @@ renderer_profiles:
             body: "*Service:* {{.Service}}\n*Environment:* {{.Environment}}\n*Release:* {{ index .Metadata \"release\" }}\n*Summary:* {{.Summary}}"
           telegram:
             text: "<b>[{{.Severity}}] {{.Title}}</b>\nService: <code>{{.Service}}</code>\nEnvironment: <b>{{.Environment}}</b>\nRelease: <code>{{ index .Metadata \"release\" }}</code>\nSummary: <i>{{.Summary}}</i>"
+          teams:
+            title: "[{{.Severity}}] {{.Title}}"
+            body: "**Service:** {{.Service}}\n\n**Environment:** {{.Environment}}\n\n**Release:** {{ index .Metadata \"release\" }}\n\n{{.Summary}}"
       - event:
           source: github
           key: github.workflow.failed
@@ -84,6 +92,9 @@ renderer_profiles:
             body: "*Actor:* {{ index .Metadata \"actor\" }}\n*Summary:* {{.Summary}}\n*URL:* {{.SourceURL}}"
           telegram:
             text: "<b>[{{.Severity}}] {{.Title}}</b>\nActor: <code>{{ index .Metadata \"actor\" }}</code>\nSummary: <i>{{.Summary}}</i>\n<a href=\"{{.SourceURL}}\">Open event</a>"
+          teams:
+            title: "[{{.Severity}}] {{.Title}}"
+            body: "**Actor:** {{ index .Metadata \"actor\" }}\n\n{{.Summary}}\n\n[Open event]({{.SourceURL}})"
 
   compact:
     bindings:

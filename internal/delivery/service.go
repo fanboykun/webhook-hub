@@ -13,6 +13,7 @@ import (
 	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
 	sendpkg "github.com/fanboykun/webhook-hub/internal/sender"
 	slacksender "github.com/fanboykun/webhook-hub/internal/sender/slack"
+	teamssender "github.com/fanboykun/webhook-hub/internal/sender/teams"
 	telegramsender "github.com/fanboykun/webhook-hub/internal/sender/telegram"
 	"github.com/fanboykun/webhook-hub/internal/storage"
 )
@@ -25,6 +26,7 @@ type Service struct {
 	renderer       message.Renderer
 	slackSender    *slacksender.Sender
 	telegramSender *telegramsender.Sender
+	teamsSender    *teamssender.Sender
 	destinations   *runtimeconfig.DestinationRegistry
 }
 
@@ -41,6 +43,7 @@ func NewServiceWithRenderer(store storage.DeliveryStore, cfg config.Config, dest
 		renderer:       renderer,
 		slackSender:    slacksender.New(destinations),
 		telegramSender: telegramsender.New(destinations),
+		teamsSender:    teamssender.New(destinations),
 		destinations:   destinations,
 	}
 }
@@ -163,6 +166,15 @@ func (s *Service) processEnvelope(ctx context.Context, workerID string, envelope
 			when := NextAttempt(s.clock.Now(), envelope.Delivery.AttemptCount+1, s.cfg.Retry)
 			nextAttempt = &when
 		}
+	case *teamssender.Error:
+		errorCode = typedErr.Code
+		responseCode = typedErr.ResponseCode
+		if typedErr.Retryable && envelope.Delivery.AttemptCount+1 < envelope.Delivery.MaxAttempts {
+			outcome = "retryable_failure"
+			nextStatus = domain.DeliveryRetryWait
+			when := NextAttempt(s.clock.Now(), envelope.Delivery.AttemptCount+1, s.cfg.Retry)
+			nextAttempt = &when
+		}
 	}
 
 	err = s.store.CompleteAttempt(ctx, domain.AttemptResult{
@@ -204,6 +216,8 @@ func (s *Service) sendMessage(ctx context.Context, destinationID string, destina
 		return s.slackSender.Send(ctx, destinationID, message)
 	case domain.DestinationTelegram:
 		return s.telegramSender.Send(ctx, destinationID, message)
+	case domain.DestinationTeams:
+		return s.teamsSender.Send(ctx, destinationID, message)
 	default:
 		return sendpkg.SendResult{}, slogError("unsupported destination type")
 	}

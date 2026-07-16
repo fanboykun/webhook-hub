@@ -18,7 +18,7 @@ This file turns [docs/design.md](./design.md) into trackable implementation work
 
 - Branch `ref` carries the latest work but the working tree is mid-refactor and **does not currently compile** (`internal/app`, `internal/httpserver`, and `cmd/gateway` fail with `undefined: runtimeconfig` / `undefined: sqlite`). Fix this before starting any new phase work. See [Phase 7](#phase-7-event-governed-redesign--prd-9) issue #12.
 - The Watcher-to-Slack vertical slice is functionally complete and tested.
-- Telegram destination is implemented and tested.
+- Telegram and Microsoft Teams destinations are implemented and tested.
 - GitHub adapter is implemented and tested.
 - Dynamic integrations, destinations, and renderer profiles are implemented with AES-256-GCM encryption and CRUD APIs (ADR-008, superseding ADR-004).
 - Email destination, Grafana adapter, Sentry adapter, retention worker, status endpoint, and container packaging remain open.
@@ -103,6 +103,7 @@ Goal: extend the proven delivery path to the remaining version-1 destinations.
 Tasks:
 
 - [x] Add Telegram renderer and sender.
+- [x] Add Microsoft Teams webhook renderer and sender.
 - [ ] Add email renderer for text and HTML output.
 - [ ] Integrate SMTP transport behind a sender interface.
 - [ ] Validate email addresses and sender config at startup.
@@ -110,17 +111,17 @@ Tasks:
 
 Acceptance criteria:
 
-- [ ] One event can fan out independently to Slack, Telegram, and email.
+- [ ] One event can fan out independently to Slack, Telegram, Teams, and email.
 - [ ] Failure in one destination does not block others.
 - [ ] Secrets do not appear in logs or operational responses.
 
 Suggested tests:
 
-- [ ] Renderer golden tests for Telegram and email.
-- [ ] Provider classification tests for Telegram and SMTP responses.
+- [ ] Renderer golden tests for Telegram, Teams, and email.
+- [ ] Provider classification tests for Telegram, Teams, and SMTP responses.
 - [ ] Mixed-destination worker tests proving independent outcomes.
 
-Residual: Telegram is shipped with sender tests and retry classification. Slack `Retry-After` and Telegram `Retry-After` are not currently honored by `delivery.Service` despite design section 27 requiring it; this should be fixed alongside the email sender work or under [Phase 7](#phase-7-event-governed-redesign--prd-9). Email destination type, renderer, and sender code do not exist yet.
+Residual: Telegram and Teams are shipped with sender tests and retry classification. Slack `Retry-After`, Telegram `Retry-After`, and Teams `Retry-After` are not currently honored by `delivery.Service` despite design section 27 requiring it; this should be fixed alongside the email sender work or under [Phase 7](#phase-7-event-governed-redesign--prd-9). Email destination type, renderer, and sender code do not exist yet.
 
 ## Phase 3: GitHub Adapter
 

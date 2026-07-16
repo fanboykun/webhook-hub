@@ -4,13 +4,13 @@
 **Status:** Draft for implementation  
 **Runtime shape:** Single-node Go service with durable in-process workers  
 **Primary sources:** Watcher, GitHub, Grafana Alerting, Sentry  
-**Primary destinations:** Slack, Telegram, Email
+**Primary destinations:** Slack, Telegram, Microsoft Teams, Email
 
 ---
 
 ## 1. Executive Summary
 
-The Webhook Notification Gateway receives operational events from several systems, verifies and normalizes each source-specific payload, evaluates routing policies, and delivers destination-specific messages to Slack, Telegram, and email.
+The Webhook Notification Gateway receives operational events from several systems, verifies and normalizes each source-specific payload, evaluates routing policies, and delivers destination-specific messages to Slack, Telegram, Microsoft Teams, and email.
 
 The gateway is intentionally more than a thin HTTP proxy. It persists accepted webhook receipts and delivery jobs before returning success, allowing retries, delivery history, deduplication, and recovery after process restarts.
 
@@ -22,7 +22,7 @@ The first implementation is designed as one Go process containing:
 - A normalized operational event model.
 - Configuration-defined routing policies.
 - A durable SQLite inbox/outbox implemented through GORM repositories.
-- Background delivery workers for Slack, Telegram, and email.
+- Background delivery workers for Slack, Telegram, Microsoft Teams, and email.
 - Structured contextual logging using the standard `log/slog` package.
 
 The service provides **at-least-once delivery**, not exactly-once delivery. A provider may accept a message immediately before the gateway crashes, resulting in a duplicate when the delivery lease expires and is retried. The design minimizes duplicates through source idempotency keys and durable state, but it does not claim an impossible cross-provider exactly-once guarantee.
@@ -153,7 +153,7 @@ Delivery Poller ─► Claim Due Jobs ─► Worker Pool ─► Renderer ─► 
 6. **SQLite store** — durable inbox, event journal, delivery outbox, and attempt history.
 7. **Delivery scheduler** — claims due delivery jobs using short leases.
 8. **Worker pool** — renders and sends messages outside database transactions.
-9. **Destination registry** — resolves named Slack, Telegram, and email destinations.
+9. **Destination registry** — resolves named Slack, Telegram, Microsoft Teams, and email destinations.
 10. **Operational API** — event history, delivery history, delivery details, manual retry, health.
 11. **Housekeeping worker** — recovers expired leases and applies retention policies.
 
@@ -976,6 +976,7 @@ type DestinationType string
 const (
     DestinationSlack    DestinationType = "slack"
     DestinationTelegram DestinationType = "telegram"
+    DestinationTeams    DestinationType = "teams"
     DestinationEmail    DestinationType = "email"
 )
 
@@ -1010,6 +1011,17 @@ telegram-bot:
   chat_id: "-100123456789"
   profile: compact
 ```
+
+### Microsoft Teams destination
+
+```yaml
+teams-oncall:
+  type: teams
+  webhook_url_env: TEAMS_ONCALL_WEBHOOK_URL
+  profile: detailed
+```
+
+Teams destinations use operator-owned incoming webhook URLs. The gateway renders MessageCard-compatible JSON and classifies HTTP 429 and 5xx responses as retryable.
 
 ### Email destination
 

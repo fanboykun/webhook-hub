@@ -11,6 +11,7 @@ import (
 	"github.com/fanboykun/webhook-hub/internal/config"
 	"github.com/fanboykun/webhook-hub/internal/domain"
 	slackrender "github.com/fanboykun/webhook-hub/internal/message/slack"
+	teamsrender "github.com/fanboykun/webhook-hub/internal/message/teams"
 	telegramrender "github.com/fanboykun/webhook-hub/internal/message/telegram"
 	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
 )
@@ -19,6 +20,7 @@ type ConfigurableRenderer struct {
 	profiles         *runtimeconfig.RendererProfileRegistry
 	slackFallback    Renderer
 	telegramFallback Renderer
+	teamsFallback    Renderer
 }
 
 func NewConfigurableRenderer(profiles *runtimeconfig.RendererProfileRegistry, slackFallback Renderer, telegramFallback Renderer) *ConfigurableRenderer {
@@ -32,6 +34,7 @@ func NewConfigurableRenderer(profiles *runtimeconfig.RendererProfileRegistry, sl
 		profiles:         profiles,
 		slackFallback:    slackFallback,
 		telegramFallback: telegramFallback,
+		teamsFallback:    teamsrender.NewRenderer(),
 	}
 }
 
@@ -64,6 +67,14 @@ func (r *ConfigurableRenderer) Render(ctx context.Context, event domain.Event, d
 
 		return r.renderTelegram(event, destination, telegramTpl)
 
+	case domain.DestinationTeams:
+		teamsTpl := templates.Teams
+		if teamsTpl == nil {
+			return r.teamsFallback.Render(ctx, event, destination)
+		}
+
+		return r.renderTeams(event, destination, teamsTpl)
+
 	default:
 		return r.fallback(ctx, event, destination)
 	}
@@ -75,6 +86,8 @@ func (r *ConfigurableRenderer) fallback(ctx context.Context, event domain.Event,
 		return r.slackFallback.Render(ctx, event, destination)
 	case domain.DestinationTelegram:
 		return r.telegramFallback.Render(ctx, event, destination)
+	case domain.DestinationTeams:
+		return r.teamsFallback.Render(ctx, event, destination)
 	default:
 		return domain.RenderedMessage{}, fmt.Errorf("unsupported destination type: %s", destination.Type)
 	}
@@ -196,6 +209,47 @@ func (r *ConfigurableRenderer) renderTelegram(event domain.Event, destination do
 		ContentType: "text/html; charset=utf-8",
 		Body:        []byte(renderedText),
 	}, nil
+}
+
+func (r *ConfigurableRenderer) renderTeams(event domain.Event, destination domain.Destination, tpl *domain.TeamsTemplate) (domain.RenderedMessage, error) {
+	ctxVal := config.TemplateContext{
+		Source:      string(event.Source),
+		EventKey:    event.Key,
+		EventType:   event.Key,
+		Title:       event.Title,
+		Summary:     event.Summary,
+		Severity:    string(event.Severity),
+		Lifecycle:   string(event.Lifecycle),
+		Service:     event.Scope.Service,
+		Environment: event.Scope.Environment,
+		SourceURL:   event.SourceURL,
+		OccurredAt:  event.OccurredAt,
+		Payload:     eventPayload(event),
+		Metadata:    eventMetadata(event),
+	}
+
+	var renderedTitle string
+	var err error
+	if tpl.Title != "" {
+		renderedTitle, err = executeGoTemplate("teams_title", tpl.Title, ctxVal)
+		if err != nil {
+			return domain.RenderedMessage{}, fmt.Errorf("render teams title: %w", err)
+		}
+	} else {
+		renderedTitle = fmt.Sprintf("[%s] %s", strings.ToUpper(string(event.Severity)), event.Title)
+	}
+
+	var renderedBody string
+	if tpl.Body != "" {
+		renderedBody, err = executeGoTemplate("teams_body", tpl.Body, ctxVal)
+		if err != nil {
+			return domain.RenderedMessage{}, fmt.Errorf("render teams body: %w", err)
+		}
+	} else {
+		renderedBody = event.Summary
+	}
+
+	return teamsrender.RenderMessageCard(event, destination, renderedTitle, renderedBody)
 }
 
 func escapeSlack(s string) string {
