@@ -11,7 +11,7 @@ Version 1 is intentionally opinionated:
 - Durable SQLite inbox/outbox using explicit migrations.
 - In-process scheduler and delivery workers.
 - At-least-once outbound delivery.
-- Configuration-defined integrations and destinations, plus admin-managed live routes.
+- Configuration-defined startup defaults for integrations, destinations, renderer profiles, and routes; SQLite-backed admin changes remain authoritative after seeding.
 
 ## Problem Shape
 
@@ -110,7 +110,7 @@ Docs and health:
 - SQLite is the durable inbox/outbox for version 1, which means one active application instance owns the database.
 - Huma webhook operations are retained because raw-body verification and OpenAPI generation can coexist.
 - Routing is additive; duplicate destination matches collapse into a single delivery row per event and destination.
-- Built-in renderers remain the fallback baseline, with optional event-scoped profile bindings layered on top and managed live through the admin API.
+- Built-in renderers remain the fallback baseline. Destinations can select named profiles that each target one source/event contract; templates are compiled and validated against that event's typed payload before they enter the live registry.
 
 ## Repository Direction
 
@@ -125,17 +125,19 @@ The detailed design, ADRs, API behavior, persistence model, and package directio
 
 ## Configuration Principles
 
-- Configuration references secret environment variables; it does not embed secret values.
+- Root `config.yaml` is an ignored, secret-bearing runtime file and must be protected like `.env`.
+- Inline secret fields are the local default; corresponding `*_env` fields remain available for deployments and are mutually exclusive with inline values.
 - Startup fails if required secrets, destinations, or integrations are invalid.
-- `database.encryption_key_env` points at the master encryption key env var used to protect dynamic integrations/destinations secrets in SQLite.
+- `database.encryption_key` contains the master key used to protect dynamic integrations/destinations secrets in SQLite; `database.encryption_key_env` is the optional environment-backed form.
 - SQLite runs with WAL, foreign keys enabled, a busy timeout, and short write transactions.
 - A versioned migration system is required; `AutoMigrate` is not the production schema strategy.
 
-## Environment Variables
+## Secrets
 
-- `GATEWAY_ENCRYPTION_KEY`: the default env var referenced by `database.encryption_key_env`. It must decode to 32 bytes as hex or base64. Generate one with `make gen-encryption-key`.
-- `GATEWAY_ADMIN_TOKEN`: referenced by `api.admin_token_env` in config and used for operational API auth.
-- Provider secret env vars are referenced from config, for example `WATCHER_WEBHOOK_SECRET`, `GITHUB_WEBHOOK_SECRET`, `SLACK_DEPLOYMENTS_WEBHOOK_URL`, and `TELEGRAM_ONCALL_BOT_TOKEN`.
+- Generate `database.encryption_key` with `make gen-encryption-key`; it must decode to 32 bytes as hex or base64.
+- Generate `api.admin_token` with `make gen-token`.
+- Integrations use `secret` or `client_secret`; destinations use `webhook_url` or `bot_token`.
+- Deployments may use the corresponding `*_env` fields instead, such as `encryption_key_env`, `admin_token_env`, `secret_env`, `webhook_url_env`, or `bot_token_env`.
 
 ## Operational Constraints
 

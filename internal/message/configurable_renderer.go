@@ -1,18 +1,18 @@
 package message
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
-	"text/template"
+	"unicode/utf8"
 
-	"github.com/fanboykun/webhook-hub/internal/config"
 	"github.com/fanboykun/webhook-hub/internal/domain"
+	eventdefaults "github.com/fanboykun/webhook-hub/internal/eventcatalog/defaults"
 	slackrender "github.com/fanboykun/webhook-hub/internal/message/slack"
 	teamsrender "github.com/fanboykun/webhook-hub/internal/message/teams"
 	telegramrender "github.com/fanboykun/webhook-hub/internal/message/telegram"
+	"github.com/fanboykun/webhook-hub/internal/renderprofile"
 	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
 )
 
@@ -39,48 +39,41 @@ func NewConfigurableRenderer(profiles *runtimeconfig.RendererProfileRegistry, sl
 }
 
 func (r *ConfigurableRenderer) Render(ctx context.Context, event domain.Event, destination domain.Destination) (domain.RenderedMessage, error) {
-	if destination.Profile == "" {
+	if len(destination.RendererProfiles) == 0 || r.profiles == nil {
 		return r.fallback(ctx, event, destination)
 	}
-	if r.profiles == nil {
+	profile, profileID, err := r.profiles.Resolve(destination.RendererProfiles, event)
+	if err != nil {
+		return domain.RenderedMessage{}, err
+	}
+	if profileID == "" {
 		return r.fallback(ctx, event, destination)
 	}
-	templates, ok := r.profiles.Resolve(destination.Profile, event)
-	if !ok {
-		return r.fallback(ctx, event, destination)
-	}
+	destination.SelectedProfile = profileID
 
 	switch destination.Type {
 	case domain.DestinationSlack:
-		slackTpl := templates.Slack
-		if slackTpl == nil {
+		if profile.Slack == nil {
 			return r.slackFallback.Render(ctx, event, destination)
 		}
-
-		return r.renderSlack(event, destination, slackTpl)
-
+		return r.renderSlack(event, destination, profile.Slack)
 	case domain.DestinationTelegram:
-		telegramTpl := templates.Telegram
-		if telegramTpl == nil {
+		if profile.Telegram == nil {
 			return r.telegramFallback.Render(ctx, event, destination)
 		}
-
-		return r.renderTelegram(event, destination, telegramTpl)
-
+		return r.renderTelegram(event, destination, profile.Telegram)
 	case domain.DestinationTeams:
-		teamsTpl := templates.Teams
-		if teamsTpl == nil {
+		if profile.Teams == nil {
 			return r.teamsFallback.Render(ctx, event, destination)
 		}
-
-		return r.renderTeams(event, destination, teamsTpl)
-
+		return r.renderTeams(event, destination, profile.Teams)
 	default:
 		return r.fallback(ctx, event, destination)
 	}
 }
 
 func (r *ConfigurableRenderer) fallback(ctx context.Context, event domain.Event, destination domain.Destination) (domain.RenderedMessage, error) {
+	destination.SelectedProfile = ""
 	switch destination.Type {
 	case domain.DestinationSlack:
 		return r.slackFallback.Render(ctx, event, destination)
@@ -93,228 +86,165 @@ func (r *ConfigurableRenderer) fallback(ctx context.Context, event domain.Event,
 	}
 }
 
-func (r *ConfigurableRenderer) renderSlack(event domain.Event, destination domain.Destination, tpl *domain.SlackTemplate) (domain.RenderedMessage, error) {
-	ctxVal := config.TemplateContext{
-		Source:      string(event.Source),
-		EventKey:    event.Key,
-		EventType:   event.Key,
-		Title:       event.Title,
-		Summary:     event.Summary,
-		Severity:    string(event.Severity),
-		Lifecycle:   string(event.Lifecycle),
-		Service:     event.Scope.Service,
-		Environment: event.Scope.Environment,
-		SourceURL:   event.SourceURL,
-		OccurredAt:  event.OccurredAt,
-		Payload:     eventPayload(event),
-		Metadata:    eventMetadata(event),
-	}
-
-	escapedCtx := escapeContext(ctxVal, escapeSlack)
-
-	var renderedTitle string
-	var err error
-	if tpl.Title != "" {
-		renderedTitle, err = executeGoTemplate("slack_title", tpl.Title, escapedCtx)
-		if err != nil {
-			return domain.RenderedMessage{}, fmt.Errorf("render slack title: %w", err)
-		}
-	} else {
-		renderedTitle = fmt.Sprintf("[%s] %s", strings.ToUpper(string(event.Severity)), event.Title)
-	}
-
-	var renderedBody string
-	if tpl.Body != "" {
-		renderedBody, err = executeGoTemplate("slack_body", tpl.Body, escapedCtx)
-		if err != nil {
-			return domain.RenderedMessage{}, fmt.Errorf("render slack body: %w", err)
-		}
-	} else {
-		renderedBody = fmt.Sprintf("*%s*\n%s", event.Title, event.Summary)
-	}
-
-	payload := map[string]any{
-		"text": renderedTitle,
-		"blocks": []map[string]any{
-			{
-				"type": "section",
-				"text": map[string]string{
-					"type": "mrkdwn",
-					"text": renderedBody,
-				},
-			},
-			{
-				"type": "context",
-				"elements": []map[string]string{
-					{"type": "mrkdwn", "text": fmt.Sprintf("service=%s env=%s profile=%s", event.Scope.Service, event.Scope.Environment, destination.Profile)},
-				},
-			},
-		},
-	}
-
-	body, err := json.Marshal(payload)
+func (r *ConfigurableRenderer) renderSlack(event domain.Event, destination domain.Destination, templates *renderprofile.CompiledPair) (domain.RenderedMessage, error) {
+	contextValue, err := templateContext(event)
 	if err != nil {
 		return domain.RenderedMessage{}, err
 	}
+	escaped := escapeContext(contextValue, escapeSlack)
 
-	return domain.RenderedMessage{
-		ContentType: "application/json",
-		Body:        body,
-	}, nil
-}
-
-func (r *ConfigurableRenderer) renderTelegram(event domain.Event, destination domain.Destination, tpl *domain.TelegramTemplate) (domain.RenderedMessage, error) {
-	ctxVal := config.TemplateContext{
-		Source:      string(event.Source),
-		EventKey:    event.Key,
-		EventType:   event.Key,
-		Title:       event.Title,
-		Summary:     event.Summary,
-		Severity:    string(event.Severity),
-		Lifecycle:   string(event.Lifecycle),
-		Service:     event.Scope.Service,
-		Environment: event.Scope.Environment,
-		SourceURL:   event.SourceURL,
-		OccurredAt:  event.OccurredAt,
-		Payload:     eventPayload(event),
-		Metadata:    eventMetadata(event),
-	}
-
-	escapedCtx := escapeContext(ctxVal, escapeTelegram)
-
-	var renderedText string
-	var err error
-	if tpl.Text != "" {
-		renderedText, err = executeGoTemplate("telegram_text", tpl.Text, escapedCtx)
+	title := fmt.Sprintf("[%s] %s", strings.ToUpper(string(event.Severity)), escapeSlack(event.Title))
+	if templates.Title != nil {
+		title, err = renderprofile.Execute(templates.Title, escaped)
 		if err != nil {
-			return domain.RenderedMessage{}, fmt.Errorf("render telegram text: %w", err)
+			return domain.RenderedMessage{}, fmt.Errorf("render slack title: %w", err)
 		}
-	} else {
-		text := fmt.Sprintf(
-			"<b>%s</b>\n%s\n\nseverity=%s\nenv=%s\nservice=%s\nprofile=%s",
-			escapeTelegram(event.Title),
-			escapeTelegram(event.Summary),
-			escapeTelegram(string(event.Severity)),
-			escapeTelegram(event.Scope.Environment),
-			escapeTelegram(event.Scope.Service),
-			escapeTelegram(destination.Profile),
-		)
-		if event.SourceURL != "" {
-			text += fmt.Sprintf("\n<a href=\"%s\">Open source event</a>", escapeTelegram(event.SourceURL))
+	}
+	bodyText := fmt.Sprintf("*%s*\n%s", escapeSlack(event.Title), escapeSlack(event.Summary))
+	if templates.Body != nil {
+		bodyText, err = renderprofile.Execute(templates.Body, escaped)
+		if err != nil {
+			return domain.RenderedMessage{}, fmt.Errorf("render slack body: %w", err)
 		}
-		renderedText = text
+	}
+	if err := enforceRuneLimit("slack title", title, 3000); err != nil {
+		return domain.RenderedMessage{}, err
+	}
+	if err := enforceRuneLimit("slack body", bodyText, 3000); err != nil {
+		return domain.RenderedMessage{}, err
 	}
 
-	return domain.RenderedMessage{
-		ContentType: "text/html; charset=utf-8",
-		Body:        []byte(renderedText),
-	}, nil
+	payload := map[string]any{
+		"text": title,
+		"blocks": []map[string]any{
+			{"type": "section", "text": map[string]string{"type": "mrkdwn", "text": bodyText}},
+			{
+				"type": "context",
+				"elements": []map[string]string{{
+					"type": "mrkdwn",
+					"text": fmt.Sprintf("service=%s env=%s profile=%s", escapeSlack(event.Scope.Service), escapeSlack(event.Scope.Environment), escapeSlack(destination.SelectedProfile)),
+				}},
+			},
+		},
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return domain.RenderedMessage{}, err
+	}
+	return domain.RenderedMessage{ContentType: "application/json", Body: encoded}, nil
 }
 
-func (r *ConfigurableRenderer) renderTeams(event domain.Event, destination domain.Destination, tpl *domain.TeamsTemplate) (domain.RenderedMessage, error) {
-	ctxVal := config.TemplateContext{
-		Source:      string(event.Source),
-		EventKey:    event.Key,
-		EventType:   event.Key,
-		Title:       event.Title,
-		Summary:     event.Summary,
-		Severity:    string(event.Severity),
-		Lifecycle:   string(event.Lifecycle),
-		Service:     event.Scope.Service,
-		Environment: event.Scope.Environment,
-		SourceURL:   event.SourceURL,
-		OccurredAt:  event.OccurredAt,
-		Payload:     eventPayload(event),
-		Metadata:    eventMetadata(event),
+func (r *ConfigurableRenderer) renderTelegram(event domain.Event, destination domain.Destination, compiled *renderprofile.CompiledTemplate) (domain.RenderedMessage, error) {
+	contextValue, err := templateContext(event)
+	if err != nil {
+		return domain.RenderedMessage{}, err
 	}
+	text, err := renderprofile.Execute(compiled, escapeContext(contextValue, escapeTelegram))
+	if err != nil {
+		return domain.RenderedMessage{}, fmt.Errorf("render telegram text: %w", err)
+	}
+	if err := enforceRuneLimit("telegram text", text, 4096); err != nil {
+		return domain.RenderedMessage{}, err
+	}
+	return domain.RenderedMessage{ContentType: "text/html; charset=utf-8", Body: []byte(text)}, nil
+}
 
-	var renderedTitle string
-	var err error
-	if tpl.Title != "" {
-		renderedTitle, err = executeGoTemplate("teams_title", tpl.Title, ctxVal)
+func (r *ConfigurableRenderer) renderTeams(event domain.Event, destination domain.Destination, templates *renderprofile.CompiledPair) (domain.RenderedMessage, error) {
+	contextValue, err := templateContext(event)
+	if err != nil {
+		return domain.RenderedMessage{}, err
+	}
+	escaped := escapeContext(contextValue, escapeTeamsMarkdown)
+
+	title := fmt.Sprintf("[%s] %s", strings.ToUpper(string(event.Severity)), escapeTeamsMarkdown(event.Title))
+	if templates.Title != nil {
+		title, err = renderprofile.Execute(templates.Title, escaped)
 		if err != nil {
 			return domain.RenderedMessage{}, fmt.Errorf("render teams title: %w", err)
 		}
-	} else {
-		renderedTitle = fmt.Sprintf("[%s] %s", strings.ToUpper(string(event.Severity)), event.Title)
 	}
-
-	var renderedBody string
-	if tpl.Body != "" {
-		renderedBody, err = executeGoTemplate("teams_body", tpl.Body, ctxVal)
+	bodyText := escapeTeamsMarkdown(event.Summary)
+	if templates.Body != nil {
+		bodyText, err = renderprofile.Execute(templates.Body, escaped)
 		if err != nil {
 			return domain.RenderedMessage{}, fmt.Errorf("render teams body: %w", err)
 		}
-	} else {
-		renderedBody = event.Summary
 	}
-
-	return teamsrender.RenderMessageCard(event, destination, renderedTitle, renderedBody)
-}
-
-func escapeSlack(s string) string {
-	replacer := strings.NewReplacer(
-		"&", "&amp;",
-		"<", "&lt;",
-		">", "&gt;",
-	)
-	return replacer.Replace(s)
-}
-
-func escapeTelegram(s string) string {
-	replacer := strings.NewReplacer(
-		"&", "&amp;",
-		"<", "&lt;",
-		">", "&gt;",
-		"\"", "&quot;",
-	)
-	return replacer.Replace(s)
-}
-
-func escapeContext(ctxVal config.TemplateContext, escapeFn func(string) string) config.TemplateContext {
-	ctxVal.Source = escapeFn(ctxVal.Source)
-	ctxVal.EventKey = escapeFn(ctxVal.EventKey)
-	ctxVal.EventType = escapeFn(ctxVal.EventType)
-	ctxVal.Title = escapeFn(ctxVal.Title)
-	ctxVal.Summary = escapeFn(ctxVal.Summary)
-	ctxVal.Severity = escapeFn(ctxVal.Severity)
-	ctxVal.Lifecycle = escapeFn(ctxVal.Lifecycle)
-	ctxVal.Service = escapeFn(ctxVal.Service)
-	ctxVal.Environment = escapeFn(ctxVal.Environment)
-	ctxVal.SourceURL = escapeFn(ctxVal.SourceURL)
-	return ctxVal
-}
-
-func eventPayload(event domain.Event) map[string]any {
-	if len(event.PayloadJSON) == 0 {
-		return map[string]any{}
+	if err := enforceRuneLimit("teams title", title, 3000); err != nil {
+		return domain.RenderedMessage{}, err
 	}
-	var payload map[string]any
-	if err := json.Unmarshal(event.PayloadJSON, &payload); err != nil {
-		return map[string]any{}
+	if err := enforceRuneLimit("teams body", bodyText, 24000); err != nil {
+		return domain.RenderedMessage{}, err
 	}
-	return payload
+	return teamsrender.RenderMessageCard(event, destination, title, bodyText)
 }
 
-func eventMetadata(event domain.Event) map[string]any {
-	if len(event.MetadataJSON) == 0 {
-		return map[string]any{}
-	}
-	var metadata map[string]any
-	if err := json.Unmarshal(event.MetadataJSON, &metadata); err != nil {
-		return map[string]any{}
-	}
-	return metadata
-}
-
-func executeGoTemplate(name, templateStr string, ctx config.TemplateContext) (string, error) {
-	tmpl, err := template.New(name).Option("missingkey=error").Parse(templateStr)
+func templateContext(event domain.Event) (renderprofile.Context, error) {
+	payload, err := eventdefaults.Registry().MaterializePayload(event.Source, event.Key, event.PayloadVersion, event.PayloadJSON)
 	if err != nil {
-		return "", err
+		return renderprofile.Context{}, fmt.Errorf("materialize renderer payload: %w", err)
 	}
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, ctx); err != nil {
-		return "", err
+	return renderprofile.Context{
+		Source:      string(event.Source),
+		EventKey:    event.Key,
+		EventType:   event.Key,
+		Title:       event.Title,
+		Summary:     event.Summary,
+		Severity:    string(event.Severity),
+		Lifecycle:   string(event.Lifecycle),
+		Service:     event.Scope.Service,
+		Environment: event.Scope.Environment,
+		SourceURL:   event.SourceURL,
+		OccurredAt:  event.OccurredAt,
+		Payload:     payload,
+	}, nil
+}
+
+func escapeSlack(value string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(value)
+}
+
+func escapeTelegram(value string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "\"", "&quot;").Replace(value)
+}
+
+func escapeTeamsMarkdown(value string) string {
+	return strings.NewReplacer("&", "&amp;", "\\", "\\\\", "*", "\\*", "_", "\\_", "[", "\\[", "]", "\\]", "(", "\\(", ")", "\\)", "<", "&lt;", ">", "&gt;").Replace(value)
+}
+
+func escapeContext(contextValue renderprofile.Context, escapeFn func(string) string) renderprofile.Context {
+	contextValue.Source = escapeFn(contextValue.Source)
+	contextValue.EventKey = escapeFn(contextValue.EventKey)
+	contextValue.EventType = escapeFn(contextValue.EventType)
+	contextValue.Title = escapeFn(contextValue.Title)
+	contextValue.Summary = escapeFn(contextValue.Summary)
+	contextValue.Severity = escapeFn(contextValue.Severity)
+	contextValue.Lifecycle = escapeFn(contextValue.Lifecycle)
+	contextValue.Service = escapeFn(contextValue.Service)
+	contextValue.Environment = escapeFn(contextValue.Environment)
+	contextValue.SourceURL = escapeFn(contextValue.SourceURL)
+	contextValue.Payload = escapePayload(contextValue.Payload, escapeFn)
+	return contextValue
+}
+
+func escapePayload(payload map[string]any, escapeFn func(string) string) map[string]any {
+	out := make(map[string]any, len(payload))
+	for key, value := range payload {
+		switch typed := value.(type) {
+		case string:
+			out[key] = escapeFn(typed)
+		case map[string]any:
+			out[key] = escapePayload(typed, escapeFn)
+		default:
+			out[key] = typed
+		}
 	}
-	return buf.String(), nil
+	return out
+}
+
+func enforceRuneLimit(label, value string, limit int) error {
+	if utf8.RuneCountInString(value) > limit {
+		return fmt.Errorf("%s exceeds %d characters", label, limit)
+	}
+	return nil
 }

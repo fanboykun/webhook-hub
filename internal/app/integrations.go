@@ -41,6 +41,8 @@ func (s *Service) GetIntegration(ctx context.Context, integrationID string) (dom
 }
 
 func (s *Service) CreateIntegration(ctx context.Context, integration domain.ManagedIntegration) (domain.ManagedIntegration, error) {
+	s.dynamicMu.Lock()
+	defer s.dynamicMu.Unlock()
 	if err := s.validateIntegration(integration); err != nil {
 		return domain.ManagedIntegration{}, err
 	}
@@ -50,13 +52,15 @@ func (s *Service) CreateIntegration(ctx context.Context, integration domain.Mana
 	if err := s.store.CreateIntegration(ctx, integration); err != nil {
 		return domain.ManagedIntegration{}, normalizeDynamicConfigErr(err)
 	}
-	if err := s.ReloadDynamicConfig(ctx); err != nil {
+	if err := s.reloadDynamicConfigLocked(ctx); err != nil {
 		return domain.ManagedIntegration{}, errors.Join(ErrRuntimeReloadRequired, normalizeDynamicConfigErr(err))
 	}
 	return integration, nil
 }
 
 func (s *Service) UpdateIntegration(ctx context.Context, integration domain.ManagedIntegration) (domain.ManagedIntegration, error) {
+	s.dynamicMu.Lock()
+	defer s.dynamicMu.Unlock()
 	current, err := s.store.GetIntegration(ctx, integration.ID)
 	if err != nil {
 		if errors.Is(err, sqlite.ErrEncryptionUnavailable) {
@@ -81,13 +85,15 @@ func (s *Service) UpdateIntegration(ctx context.Context, integration domain.Mana
 	if err := s.store.UpdateIntegration(ctx, integration); err != nil {
 		return domain.ManagedIntegration{}, normalizeDynamicConfigErr(err)
 	}
-	if err := s.ReloadDynamicConfig(ctx); err != nil {
+	if err := s.reloadDynamicConfigLocked(ctx); err != nil {
 		return domain.ManagedIntegration{}, errors.Join(ErrRuntimeReloadRequired, normalizeDynamicConfigErr(err))
 	}
 	return integration, nil
 }
 
 func (s *Service) DeleteIntegration(ctx context.Context, integrationID string) error {
+	s.dynamicMu.Lock()
+	defer s.dynamicMu.Unlock()
 	if _, err := s.store.GetIntegration(ctx, integrationID); err != nil {
 		if errors.Is(err, sqlite.ErrEncryptionUnavailable) {
 			return ErrDynamicConfigUnavailable
@@ -100,7 +106,7 @@ func (s *Service) DeleteIntegration(ctx context.Context, integrationID string) e
 	if err := s.store.DeleteIntegration(ctx, integrationID); err != nil {
 		return normalizeDynamicConfigErr(err)
 	}
-	if err := s.ReloadDynamicConfig(ctx); err != nil {
+	if err := s.reloadDynamicConfigLocked(ctx); err != nil {
 		return errors.Join(ErrRuntimeReloadRequired, normalizeDynamicConfigErr(err))
 	}
 	return nil

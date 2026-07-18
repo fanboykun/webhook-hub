@@ -37,7 +37,7 @@ func RenderMessageCard(event domain.Event, destination domain.Destination, title
 					{"name": "Lifecycle", "value": string(event.Lifecycle)},
 					{"name": "Service", "value": event.Scope.Service},
 					{"name": "Environment", "value": event.Scope.Environment},
-					{"name": "Profile", "value": destination.Profile},
+					{"name": "Profile", "value": destination.SelectedProfile},
 				},
 				"markdown": true,
 			},

@@ -40,22 +40,22 @@ func NewFromString(raw string) (*Cipher, error) {
 func ParseKey(raw string) ([]byte, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return nil, fmt.Errorf("%s is required", EncryptionKeyEnv)
+		return nil, fmt.Errorf("encryption key is required")
 	}
 
 	if decoded, err := hex.DecodeString(raw); err == nil {
 		if len(decoded) != 32 {
-			return nil, fmt.Errorf("%s hex value must decode to 32 bytes", EncryptionKeyEnv)
+			return nil, fmt.Errorf("encryption key hex value must decode to 32 bytes")
 		}
 		return decoded, nil
 	}
 
 	decoded, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil {
-		return nil, fmt.Errorf("%s must be valid hex or base64: %w", EncryptionKeyEnv, err)
+		return nil, fmt.Errorf("encryption key must be valid hex or base64: %w", err)
 	}
 	if len(decoded) != 32 {
-		return nil, fmt.Errorf("%s base64 value must decode to 32 bytes", EncryptionKeyEnv)
+		return nil, fmt.Errorf("encryption key base64 value must decode to 32 bytes")
 	}
 	return decoded, nil
 }

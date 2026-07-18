@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/fanboykun/webhook-hub/internal/domain"
 	"github.com/fanboykun/webhook-hub/internal/storage/sqlite"
@@ -41,6 +42,8 @@ func (s *Service) GetDestination(ctx context.Context, destinationID string) (dom
 }
 
 func (s *Service) CreateDestination(ctx context.Context, destination domain.ManagedDestination) (domain.ManagedDestination, error) {
+	s.dynamicMu.Lock()
+	defer s.dynamicMu.Unlock()
 	if err := s.validateDestination(destination); err != nil {
 		return domain.ManagedDestination{}, err
 	}
@@ -50,13 +53,15 @@ func (s *Service) CreateDestination(ctx context.Context, destination domain.Mana
 	if err := s.store.CreateDestination(ctx, destination); err != nil {
 		return domain.ManagedDestination{}, normalizeDynamicConfigErr(err)
 	}
-	if err := s.ReloadDynamicConfig(ctx); err != nil {
+	if err := s.reloadDynamicConfigLocked(ctx); err != nil {
 		return domain.ManagedDestination{}, errors.Join(ErrRuntimeReloadRequired, normalizeDynamicConfigErr(err))
 	}
 	return destination, nil
 }
 
 func (s *Service) UpdateDestination(ctx context.Context, destination domain.ManagedDestination) (domain.ManagedDestination, error) {
+	s.dynamicMu.Lock()
+	defer s.dynamicMu.Unlock()
 	current, err := s.store.GetDestination(ctx, destination.ID)
 	if err != nil {
 		if errors.Is(err, sqlite.ErrEncryptionUnavailable) {
@@ -81,13 +86,15 @@ func (s *Service) UpdateDestination(ctx context.Context, destination domain.Mana
 	if err := s.store.UpdateDestination(ctx, destination); err != nil {
 		return domain.ManagedDestination{}, normalizeDynamicConfigErr(err)
 	}
-	if err := s.ReloadDynamicConfig(ctx); err != nil {
+	if err := s.reloadDynamicConfigLocked(ctx); err != nil {
 		return domain.ManagedDestination{}, errors.Join(ErrRuntimeReloadRequired, normalizeDynamicConfigErr(err))
 	}
 	return destination, nil
 }
 
 func (s *Service) DeleteDestination(ctx context.Context, destinationID string) error {
+	s.dynamicMu.Lock()
+	defer s.dynamicMu.Unlock()
 	if _, err := s.store.GetDestination(ctx, destinationID); err != nil {
 		if errors.Is(err, sqlite.ErrEncryptionUnavailable) {
 			return ErrDynamicConfigUnavailable
@@ -97,10 +104,28 @@ func (s *Service) DeleteDestination(ctx context.Context, destinationID string) e
 		}
 		return err
 	}
+	routes, err := s.store.ListRoutes(ctx)
+	if err != nil {
+		return err
+	}
+	for _, route := range routes {
+		for _, referencedID := range route.Destinations {
+			if referencedID == destinationID {
+				return fmt.Errorf("%w: route %q references destination %q", ErrDestinationInUse, route.ID, destinationID)
+			}
+		}
+	}
+	active, err := s.store.HasActiveDeliveriesForDestination(ctx, destinationID)
+	if err != nil {
+		return err
+	}
+	if active {
+		return fmt.Errorf("%w: destination %q has active deliveries", ErrDestinationInUse, destinationID)
+	}
 	if err := s.store.DeleteDestination(ctx, destinationID); err != nil {
 		return normalizeDynamicConfigErr(err)
 	}
-	if err := s.ReloadDynamicConfig(ctx); err != nil {
+	if err := s.reloadDynamicConfigLocked(ctx); err != nil {
 		return errors.Join(ErrRuntimeReloadRequired, normalizeDynamicConfigErr(err))
 	}
 	return nil

@@ -12,6 +12,8 @@ import (
 	"github.com/fanboykun/webhook-hub/internal/clock"
 	"github.com/fanboykun/webhook-hub/internal/config"
 	"github.com/fanboykun/webhook-hub/internal/domain"
+	"github.com/fanboykun/webhook-hub/internal/eventcatalog"
+	eventdefaults "github.com/fanboykun/webhook-hub/internal/eventcatalog/defaults"
 	"github.com/fanboykun/webhook-hub/internal/id"
 	"github.com/fanboykun/webhook-hub/internal/routing"
 	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
@@ -27,6 +29,7 @@ type Service struct {
 	logger       *slog.Logger
 	integrations *runtimeconfig.IntegrationRegistry
 	destinations *runtimeconfig.DestinationRegistry
+	catalog      *eventcatalog.Registry
 }
 
 func NewService(store storage.IngestStore, cfg config.Config, adapters *Registry, router *routing.Engine, integrations *runtimeconfig.IntegrationRegistry, destinations *runtimeconfig.DestinationRegistry, clk clock.Clock, logger *slog.Logger) *Service {
@@ -39,6 +42,7 @@ func NewService(store storage.IngestStore, cfg config.Config, adapters *Registry
 		logger:       logger,
 		integrations: integrations,
 		destinations: destinations,
+		catalog:      eventdefaults.Registry(),
 	}
 }
 
@@ -97,6 +101,12 @@ func (s *Service) Handle(ctx context.Context, source domain.Source, req InboundR
 
 	totalMatches := 0
 	for _, candidate := range normalized.Events {
+		if err := s.catalog.NormalizeEnvelope(&candidate.EventEnvelope); err != nil {
+			if s.logger != nil {
+				s.logger.Warn("webhook.payload_contract_rejected", "source", source, "integration_id", req.IntegrationID, "event_key", candidate.Key, "error", err)
+			}
+			return domain.IngestResult{}, ErrMalformedPayload
+		}
 		event := domain.Event{
 			ID:            id.New(now),
 			ReceiptID:     receiptID,

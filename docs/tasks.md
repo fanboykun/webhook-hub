@@ -16,13 +16,13 @@ This file turns [docs/design.md](./design.md) into trackable implementation work
 
 ## Current State
 
-- Branch `ref` carries the latest work but the working tree is mid-refactor and **does not currently compile** (`internal/app`, `internal/httpserver`, and `cmd/gateway` fail with `undefined: runtimeconfig` / `undefined: sqlite`). Fix this before starting any new phase work. See [Phase 7](#phase-7-event-governed-redesign--prd-9) issue #12.
+- Branch `main` is green after the renderer-profile correction pass: `go test ./...`, `git diff --check`, and the Windows amd64 build pass on 2026-07-16. Issues #13 and #16 remain open while the corrected profile model is reviewed.
 - The Watcher-to-Slack vertical slice is functionally complete and tested.
 - Telegram and Microsoft Teams destinations are implemented and tested.
 - GitHub adapter is implemented and tested.
-- Dynamic integrations, destinations, and renderer profiles are implemented with AES-256-GCM encryption and CRUD APIs (ADR-008, superseding ADR-004).
+- Dynamic integrations, destinations, renderer profiles, and routes are implemented with transactional startup defaults and CRUD APIs; provider secrets use AES-256-GCM encryption (ADR-008 and ADR-0013, superseding ADR-004).
 - Email destination, Grafana adapter, Sentry adapter, retention worker, status endpoint, and container packaging remain open.
-- `docs/design.md` has not yet been updated for the event-definition registry redesign tracked in [Phase 7](#phase-7-event-governed-redesign--prd-9). That doc update is part of issue #11/#12 scope.
+- `docs/design.md` is updated for the event-definition registry and corrected single-event renderer-profile model.
 
 ## Phase 0: Foundation
 
@@ -322,7 +322,7 @@ Blocked by: [Issue #10](https://github.com/fanboykun/webhook-hub/issues/10).
 
 Status: `done`
 
-PRD findings addressed: C11, C13, D15, D16, D17, D19, E23. Also unblocks the current build break on branch `ref`.
+PRD findings addressed: C11, C13, D15, D16, D17, D19, E23. Also unblocked the earlier build break on branch `ref`.
 
 Tasks:
 
@@ -331,7 +331,7 @@ Tasks:
 - [x] Split `internal/httpserver/handler.go` by endpoint family (webhooks, health, receipts, deliveries, integrations, destinations, renderer profiles, routes) without changing existing route behavior.
 - [x] Make admin authorization structural for `/api/v1/` endpoints instead of manually repeated in each handler (wire the existing `adminAuthMiddleware` or replace the per-handler `Authorize` calls).
 - [x] Make runtime config reload failures distinguishable from validation/persistence failures so operators can tell whether data persisted and what needs reconciliation.
-- [x] Move renderer-profile validation out of startup config code into the profile model/service boundary.
+- [x] Route renderer-profile API writes through the service validation boundary; remaining package cleanup is tracked in the cross-cutting backlog.
 - [x] Reconcile this file and `docs/design.md` with real implemented behavior and remaining scope.
 
 Acceptance criteria:
@@ -346,24 +346,24 @@ Blocked by: [Issue #10](https://github.com/fanboykun/webhook-hub/issues/10).
 
 ### Slice 7d: Event-aware renderer profiles — Issue #13
 
-Status: `done`
+Status: `in_progress`
 
 PRD findings addressed: B8, B9, and the rendering side of the weak event contract.
 
 Tasks:
 
-- [x] Redesign renderer profiles around event definitions so template authoring matches the actual event contract.
+- [x] Redesign renderer profiles so one profile targets exactly one source/event definition.
 - [x] Make templates receive event-aware payload data (from the typed payload introduced in issue #11) in addition to the normalized envelope fields.
-- [x] Tie profile validation to the event-definition registry rather than a flat list of event type strings.
+- [x] Tie profile validation to the event-definition registry and declared event payload fields rather than a flat list of event type strings.
 - [x] Keep existing fallback rendering behavior available when no event-specific template is configured.
-- [x] Update the renderer-profile API and OpenAPI docs to reflect the new event-aware authoring model.
+- [x] Re-review the renderer-profile API and OpenAPI docs against the corrected one-profile-one-event authoring model.
 
 Acceptance criteria:
 
-- [x] Renderer profiles are modeled and validated against known event definitions.
-- [x] Templates can access event-specific payload fields in addition to normalized envelope fields.
+- [x] Renderer profiles are modeled and validated against exactly one known event definition.
+- [x] Templates can access declared event-specific payload fields in addition to normalized envelope fields.
 - [x] Existing fallback rendering behavior remains available when no event-specific template is configured.
-- [x] The renderer-profile API and docs reflect the new event-aware authoring model.
+- [x] The renderer-profile API and docs reflect the corrected one-profile-one-event authoring model.
 - [x] Renderer tests cover both event-specific payload access and fallback behavior.
 
 Blocked by: [Issue #11](https://github.com/fanboykun/webhook-hub/issues/11).
@@ -381,8 +381,9 @@ These items should be handled within the relevant phase, not as a separate late 
 - [x] Preserve raw-body verification semantics across all webhook handlers.
 - [x] Maintain OpenAPI documentation accuracy as endpoints are added (admin auth is enforced structurally through middleware and documented through the bearer security scheme).
 - [x] Add fixture coverage for each supported source family.
+- [ ] Move renderer-profile validation helpers fully out of `internal/config` so config parsing no longer imports or owns event-catalog template validation.
 - [ ] Honor provider `Retry-After` for Slack 429 and Telegram 429 (design section 27; currently ignored by `delivery.Service`).
-- [ ] Resolve the inert `workers.concurrency` config (implement a real bounded worker pool or remove the field until needed).
+- [x] Honor `workers.concurrency` by starting the configured number of independent delivery schedulers.
 - [ ] Remove or explicitly mark email as incomplete across domain/config/renderer schema surfaces until the email sender ships (PRD finding E22).
 
 ## Renderer Configurability Backlog
@@ -398,7 +399,7 @@ Implementation issues (all closed):
 - [x] Slice 2: Telegram Support & Variable Escaping [Issue #3](https://github.com/fanboykun/webhook-hub/issues/3)
 - [x] Slice 3: Event-Type Overrides & Golden Tests [Issue #4](https://github.com/fanboykun/webhook-hub/issues/4)
 
-Note: the current source-first profile shape is functional but will be redesigned to event-first under [Phase 7](#phase-7-event-governed-redesign--prd-9) issue #13.
+Note: the old source-first profile shape has been replaced by a one-profile-one-source-event model under [Phase 7](#phase-7-event-governed-redesign--prd-9) issue #13. Issue #13 remains open for review and final boundary cleanup.
 
 ## Dynamic Config Backlog (Integrations & Destinations via API)
 
@@ -416,8 +417,8 @@ Implementation issues (all closed):
 Shipped:
 - [x] AES-256-GCM secret encryption helper in `internal/config/crypto`.
 - [x] SQLite migrations and GORM models for `integrations`, `destinations`, and `renderer_profiles`.
-- [x] Configuration seeding from `config.yaml` to SQLite on application startup.
-- [x] Thread-safe, hot-reloaded in-memory registries for integrations, destinations, and renderer profiles.
+- [x] Transactional seeding of integrations, destinations, renderer profiles, and routes from `config.yaml` when each corresponding SQLite table is empty.
+- [x] Thread-safe, hot-reloaded in-memory registries and routing engine publication before the HTTP server and workers start.
 - [x] Ingress service and delivery service resolve configurations from the dynamic registries.
 - [x] Huma REST CRUD API for `/api/v1/integrations`, `/api/v1/destinations`, and `/api/v1/renderer-profiles` with validation, secret masking, and update preservation.
 - [x] Huma REST CRUD API for `/api/v1/renderer-profiles`.
@@ -426,9 +427,9 @@ Acceptance criteria (met):
 - [x] Webhook integrations and delivery destinations can be created, retrieved, updated, and deleted dynamically via the operational API.
 - [x] Sensitive fields are stored encrypted in SQLite using AES-256-GCM.
 - [x] Sensitive fields are redacted as `"[REDACTED]"` in all retrieval API responses.
-- [x] `database.encryption_key_env` points to a present and valid master key (32 decoded bytes as hex or base64).
+- [x] `database.encryption_key` or `database.encryption_key_env` resolves to a valid master key (32 decoded bytes as hex or base64).
 
-Residual: the write-then-reload split-brain window (PRD finding C11) is addressed under [Phase 7](#phase-7-event-governed-redesign--prd-9) issue #12.
+Residual: persisted writes can still succeed while a later in-memory publication fails, which is surfaced as `ErrRuntimeReloadRequired`; publication itself validates a complete snapshot first and dynamic config plus route writes are serialized.
 
 ## Recommended First Build Slice
 

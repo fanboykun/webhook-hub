@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/fanboykun/webhook-hub/internal/config"
@@ -11,9 +12,15 @@ import (
 	"github.com/fanboykun/webhook-hub/internal/runtimeconfig"
 )
 
+var managedIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+
 func (s *Service) validateRoute(route domain.Route) error {
-	if strings.TrimSpace(route.ID) == "" {
-		return errors.New("route id is required")
+	return validateRouteWithDestinations(route, s.destinations)
+}
+
+func validateRouteWithDestinations(route domain.Route, destinations *runtimeconfig.DestinationRegistry) error {
+	if !managedIDPattern.MatchString(route.ID) || strings.TrimSpace(route.ID) != route.ID {
+		return errors.New("route id must be a lowercase slug without surrounding whitespace")
 	}
 	if len(route.Destinations) == 0 {
 		return errors.New("route destinations must not be empty")
@@ -28,10 +35,10 @@ func (s *Service) validateRoute(route domain.Route) error {
 			return fmt.Errorf("route destinations must be unique: %s", destinationID)
 		}
 		seenDestinations[destinationID] = struct{}{}
-		if s.destinations == nil {
+		if destinations == nil {
 			return errors.New("destination registry is not configured")
 		}
-		if _, exists := s.destinations.Get(destinationID); !exists {
+		if _, exists := destinations.Get(destinationID); !exists {
 			return errors.New("route references unknown destination " + destinationID)
 		}
 	}
@@ -39,8 +46,8 @@ func (s *Service) validateRoute(route domain.Route) error {
 }
 
 func (s *Service) validateIntegration(integration domain.ManagedIntegration) error {
-	if strings.TrimSpace(integration.ID) == "" {
-		return errors.New("integration id is required")
+	if !managedIDPattern.MatchString(integration.ID) || strings.TrimSpace(integration.ID) != integration.ID {
+		return errors.New("integration id must be a lowercase slug without surrounding whitespace")
 	}
 	switch integration.Source {
 	case domain.SourceWatcher:
@@ -61,8 +68,12 @@ func (s *Service) validateIntegration(integration domain.ManagedIntegration) err
 }
 
 func (s *Service) validateDestination(destination domain.ManagedDestination) error {
-	if strings.TrimSpace(destination.ID) == "" {
-		return errors.New("destination id is required")
+	return s.validateDestinationWithRegistry(destination, s.profiles)
+}
+
+func (s *Service) validateDestinationWithRegistry(destination domain.ManagedDestination, profiles *runtimeconfig.RendererProfileRegistry) error {
+	if !managedIDPattern.MatchString(destination.ID) || strings.TrimSpace(destination.ID) != destination.ID {
+		return errors.New("destination id must be a lowercase slug without surrounding whitespace")
 	}
 	switch destination.Type {
 	case domain.DestinationSlack, domain.DestinationTeams:
@@ -79,28 +90,67 @@ func (s *Service) validateDestination(destination domain.ManagedDestination) err
 	default:
 		return fmt.Errorf("destination type %q is not supported in this slice", destination.Type)
 	}
-	if destination.Profile != "" {
-		if s.profiles == nil {
+	seenProfiles := make(map[string]struct{}, len(destination.RendererProfiles))
+	seenContracts := make(map[string]string, len(destination.RendererProfiles))
+	for _, profileID := range destination.RendererProfiles {
+		if !managedIDPattern.MatchString(profileID) || strings.TrimSpace(profileID) != profileID {
+			return fmt.Errorf("renderer profile %q must be a lowercase slug without surrounding whitespace", profileID)
+		}
+		if _, exists := seenProfiles[profileID]; exists {
+			return fmt.Errorf("destination repeats renderer profile %q", profileID)
+		}
+		seenProfiles[profileID] = struct{}{}
+		if profiles == nil {
 			return errors.New("renderer profile registry is not configured")
 		}
-		if _, ok := s.profiles.Get(destination.Profile); !ok {
-			return fmt.Errorf("destination references undefined renderer profile %q", destination.Profile)
+		profile, ok := profiles.Get(profileID)
+		if !ok {
+			return fmt.Errorf("destination references undefined renderer profile %q", profileID)
+		}
+		contract := string(profile.Source) + ":" + profile.Key
+		if previous, exists := seenContracts[contract]; exists {
+			return fmt.Errorf("renderer profiles %q and %q both target %s", previous, profileID, contract)
+		}
+		seenContracts[contract] = profileID
+		if !domainProfileSupportsDestination(profile, destination.Type) {
+			return fmt.Errorf("renderer profile %q has no %s template", profileID, destination.Type)
 		}
 	}
 	return nil
 }
 
 func (s *Service) validateRendererProfile(profile domain.ManagedRendererProfile) error {
-	if strings.TrimSpace(profile.ID) == "" {
-		return errors.New("renderer profile id is required")
+	if !managedIDPattern.MatchString(profile.ID) {
+		return errors.New("renderer profile id must be a lowercase slug")
 	}
-	if len(profile.Profile.Bindings) == 0 {
-		return errors.New("renderer profile must contain at least one event binding")
+	if profile.Profile.Source == "" {
+		return errors.New("renderer profile source is required")
+	}
+	if strings.TrimSpace(profile.Profile.Key) == "" {
+		return errors.New("renderer profile key is required")
+	}
+	if strings.TrimSpace(profile.Profile.Key) != profile.Profile.Key {
+		return errors.New("renderer profile key must not contain surrounding whitespace")
 	}
 	cfg := config.Config{
 		RendererProfiles: runtimeconfig.RendererProfilesToConfig(runtimeconfig.MapRendererProfiles([]domain.ManagedRendererProfile{profile})),
 	}
 	return cfg.ValidateRendererProfiles()
+}
+
+func domainProfileSupportsDestination(profile domain.RendererProfile, destinationType domain.DestinationType) bool {
+	switch destinationType {
+	case domain.DestinationSlack:
+		return profile.Templates.Slack != nil
+	case domain.DestinationTelegram:
+		return profile.Templates.Telegram != nil
+	case domain.DestinationTeams:
+		return profile.Templates.Teams != nil
+	case domain.DestinationEmail:
+		return profile.Templates.Email != nil
+	default:
+		return false
+	}
 }
 
 func normalizeRoute(route domain.Route) domain.Route {

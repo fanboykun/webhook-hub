@@ -12,13 +12,23 @@ func Project(input ProjectionInput) (domain.EventCandidate, error) {
 	payload := Payload{
 		Summary: input.Summary,
 		Watcher: input.Watcher,
-		Service: input.Service,
-		Version: input.Version,
-		Attempt: input.Attempt,
-		Health:  input.Health,
 	}
-	if input.FailedDelivery != nil {
+	switch input.NormalizedType {
+	case EventVersionFound:
+		payload.Service = input.Service
+		payload.Version = input.Version
+	case EventDeploymentStarted, EventDeploymentSucceeded, EventDeploymentFailed, EventDeploymentCancelled,
+		EventDeploymentRolledBack, EventRollbackSucceeded, EventRollbackFailed:
+		payload.Service = input.Service
+		payload.Attempt = input.Attempt
+	case EventWebhookTest:
+	case EventDeliveryExhausted:
 		payload.FailedDelivery = input.FailedDelivery
+	case EventServiceHealthChanged:
+		payload.Service = input.Service
+		payload.Health = input.Health
+	default:
+		return domain.EventCandidate{}, fmt.Errorf("unknown Watcher event contract %q", input.NormalizedType)
 	}
 
 	labelsJSON, _ := json.Marshal(input.Labels)

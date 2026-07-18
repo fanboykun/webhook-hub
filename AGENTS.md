@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## Rule
+
+    - treat root `config.yaml` as equivalent as `.env` file, u must never read them nor have permission to edit them.
+
 ## Purpose
 
 This repository is building the Webhook Notification Gateway: a single-node Go service that verifies source webhooks, normalizes them into operational events, persists receipts and delivery jobs durably in SQLite, and asynchronously delivers to Slack, Telegram, and email.

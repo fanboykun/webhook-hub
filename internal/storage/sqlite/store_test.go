@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,17 +140,14 @@ func TestRendererProfileCRUD(t *testing.T) {
 	now := time.Now().UTC()
 
 	profile := domain.ManagedRendererProfile{
-		ID: "detailed",
+		ID: "watcher-deployment-failed-detailed",
 		Profile: domain.RendererProfile{
-			Bindings: []domain.RendererBinding{
-				{
-					Event: domain.EventRef{Source: domain.SourceWatcher, Key: "watcher.deployment.failed"},
-					Templates: domain.RendererDestinationTemplates{
-						Slack: &domain.SlackTemplate{
-							Title: "{{.Title}}",
-							Body:  "{{.Summary}}",
-						},
-					},
+			Source: domain.SourceWatcher,
+			Key:    "watcher.deployment.failed",
+			Templates: domain.RendererDestinationTemplates{
+				Slack: &domain.SlackTemplate{
+					Title: "{{.Title}}",
+					Body:  "{{.Summary}}",
 				},
 			},
 		},
@@ -173,11 +171,11 @@ func TestRendererProfileCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get renderer profile failed: %v", err)
 	}
-	if len(got.Profile.Bindings) != 1 || got.Profile.Bindings[0].Templates.Slack == nil {
+	if got.Profile.Source != domain.SourceWatcher || got.Profile.Key != "watcher.deployment.failed" || got.Profile.Templates.Slack == nil {
 		t.Fatalf("expected slack template in stored profile, got %+v", got.Profile)
 	}
 
-	profile.Profile.Bindings[0].Templates = domain.RendererDestinationTemplates{
+	profile.Profile.Templates = domain.RendererDestinationTemplates{
 		Telegram: &domain.TelegramTemplate{Text: "<b>{{.Title}}</b>"},
 	}
 	profile.UpdatedAt = now.Add(time.Minute)
@@ -189,7 +187,7 @@ func TestRendererProfileCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get updated renderer profile failed: %v", err)
 	}
-	if len(updated.Profile.Bindings) != 1 || updated.Profile.Bindings[0].Templates.Telegram == nil {
+	if updated.Profile.Templates.Telegram == nil {
 		t.Fatalf("expected telegram template after update, got %+v", updated.Profile)
 	}
 
@@ -203,6 +201,71 @@ func TestRendererProfileCRUD(t *testing.T) {
 	}
 	if len(remaining) != 0 {
 		t.Fatalf("expected no renderer profiles, got %+v", remaining)
+	}
+}
+
+func TestRendererProfileRejectsUnversionedLegacyJSON(t *testing.T) {
+	store := openTestStore(t)
+	now := time.Now().UTC()
+	model := rendererProfileModel{
+		ID:          "legacy-profile",
+		ProfileJSON: []byte(`{"bindings":[]}`),
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := store.db.Create(&model).Error; err != nil {
+		t.Fatalf("insert legacy profile: %v", err)
+	}
+
+	_, err := store.GetRendererProfile(context.Background(), model.ID)
+	if err == nil || !strings.Contains(err.Error(), "unsupported payload version 0") {
+		t.Fatalf("expected legacy payload rejection, got %v", err)
+	}
+}
+
+func TestSeedDynamicConfigRollsBackAllTablesOnFailure(t *testing.T) {
+	store := openTestStore(t)
+	now := time.Now().UTC()
+	integrations := []domain.ManagedIntegration{
+		{ID: "duplicate", Source: domain.SourceGitHub, Secret: "one", CreatedAt: now, UpdatedAt: now},
+		{ID: "duplicate", Source: domain.SourceGitHub, Secret: "two", CreatedAt: now, UpdatedAt: now},
+	}
+	destinations := []domain.ManagedDestination{
+		{ID: "slack", Type: domain.DestinationSlack, WebhookURL: "https://example.invalid", CreatedAt: now, UpdatedAt: now},
+	}
+	routes := []domain.Route{{ID: "default", Destinations: []string{"slack"}, CreatedAt: now, UpdatedAt: now}}
+
+	if err := store.SeedDynamicConfig(context.Background(), integrations, destinations, nil, routes); err == nil {
+		t.Fatal("expected seed failure")
+	}
+	for _, table := range []string{"integrations", "destinations", "renderer_profiles", "route_models"} {
+		var count int64
+		if err := store.db.Table(table).Count(&count).Error; err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("expected transaction rollback for %s, got %d rows", table, count)
+		}
+	}
+}
+
+func TestSeedDynamicConfigSeedsRoutesOnlyWhenEmpty(t *testing.T) {
+	store := openTestStore(t)
+	now := time.Now().UTC()
+	defaultRoute := domain.Route{ID: "default", Destinations: []string{"slack"}, CreatedAt: now, UpdatedAt: now}
+	if err := store.SeedDynamicConfig(context.Background(), nil, nil, nil, []domain.Route{defaultRoute}); err != nil {
+		t.Fatalf("seed default route: %v", err)
+	}
+	if err := store.SeedDynamicConfig(context.Background(), nil, nil, nil, []domain.Route{{ID: "replacement", Destinations: []string{"slack"}}}); err != nil {
+		t.Fatalf("seed non-empty route table: %v", err)
+	}
+
+	routes, err := store.ListRoutes(context.Background())
+	if err != nil {
+		t.Fatalf("list routes: %v", err)
+	}
+	if len(routes) != 1 || routes[0].ID != defaultRoute.ID {
+		t.Fatalf("expected existing route state to remain authoritative, got %+v", routes)
 	}
 }
 
@@ -489,12 +552,12 @@ func TestDynamicConfigCRUD(t *testing.T) {
 	}
 
 	destination := domain.ManagedDestination{
-		ID:         "slack-deployments",
-		Type:       domain.DestinationSlack,
-		WebhookURL: "https://hooks.slack.test/services/abc",
-		Profile:    "detailed",
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		ID:               "slack-deployments",
+		Type:             domain.DestinationSlack,
+		WebhookURL:       "https://hooks.slack.test/services/abc",
+		RendererProfiles: []string{"watcher-deployment-failed-detailed"},
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}
 	if err := store.CreateDestination(context.Background(), destination); err != nil {
 		t.Fatalf("create destination failed: %v", err)

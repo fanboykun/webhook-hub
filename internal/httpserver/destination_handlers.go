@@ -65,6 +65,8 @@ func (h *Handler) updateDestination(ctx context.Context, input *updateDestinatio
 			return nil, huma.Error503ServiceUnavailable("destination unavailable")
 		case errors.Is(err, app.ErrDestinationNotFound):
 			return nil, huma.Error404NotFound("destination not found")
+		case errors.Is(err, app.ErrDestinationInUse):
+			return nil, huma.Error409Conflict(err.Error())
 		case errors.Is(err, app.ErrRuntimeReloadRequired):
 			return nil, huma.Error503ServiceUnavailable("destination persisted but runtime reload failed")
 		default:
@@ -81,6 +83,8 @@ func (h *Handler) deleteDestination(ctx context.Context, input *deleteDestinatio
 			return nil, huma.Error503ServiceUnavailable("destination unavailable")
 		case errors.Is(err, app.ErrDestinationNotFound):
 			return nil, huma.Error404NotFound("destination not found")
+		case errors.Is(err, app.ErrDestinationInUse):
+			return nil, huma.Error409Conflict(err.Error())
 		case errors.Is(err, app.ErrRuntimeReloadRequired):
 			return nil, huma.Error503ServiceUnavailable("destination deleted but runtime reload failed")
 		default:

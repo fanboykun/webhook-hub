@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"github.com/fanboykun/webhook-hub/internal/clock"
 	"github.com/fanboykun/webhook-hub/internal/config"
@@ -21,6 +22,8 @@ var (
 	ErrIntegrationNotFound      = errors.New("integration not found")
 	ErrDestinationNotFound      = errors.New("destination not found")
 	ErrRendererProfileNotFound  = errors.New("renderer profile not found")
+	ErrDestinationInUse         = errors.New("destination is in use")
+	ErrRendererProfileInUse     = errors.New("renderer profile is in use")
 	ErrDynamicConfigUnavailable = errors.New("dynamic config encryption is not configured")
 	ErrRuntimeReloadRequired    = errors.New("runtime reload required")
 )
@@ -38,6 +41,7 @@ type Service struct {
 	integrations *runtimeconfig.IntegrationRegistry
 	destinations *runtimeconfig.DestinationRegistry
 	profiles     *runtimeconfig.RendererProfileRegistry
+	dynamicMu    sync.Mutex
 }
 
 func NewService(cfg config.Config, clk clock.Clock, store storage.AdminStore, webhook WebhookService, router *routing.Engine, integrations *runtimeconfig.IntegrationRegistry, destinations *runtimeconfig.DestinationRegistry, profiles *runtimeconfig.RendererProfileRegistry) *Service {
