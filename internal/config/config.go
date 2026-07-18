@@ -88,6 +88,7 @@ type ServerConfig struct {
 
 type APIConfig struct {
 	DocsEnabled        bool   `mapstructure:"docs_enabled"`
+	AdminToken         string `mapstructure:"admin_token"`
 	AdminTokenEnv      string `mapstructure:"admin_token_env"`
 	ResolvedAdminToken string `mapstructure:"-"`
 }
@@ -100,6 +101,7 @@ type LoggingConfig struct {
 
 type DatabaseConfig struct {
 	Path                  string        `mapstructure:"path"`
+	EncryptionKey         string        `mapstructure:"encryption_key"`
 	EncryptionKeyEnv      string        `mapstructure:"encryption_key_env"`
 	BusyTimeout           time.Duration `mapstructure:"busy_timeout"`
 	MaxOpenConnections    int           `mapstructure:"max_open_connections"`
@@ -124,7 +126,9 @@ type RetryConfig struct {
 
 type IntegrationConfig struct {
 	Source          domain.Source `mapstructure:"source"`
+	Secret          string        `mapstructure:"secret"`
 	SecretEnv       string        `mapstructure:"secret_env"`
+	ClientSecret    string        `mapstructure:"client_secret"`
 	ClientSecretEnv string        `mapstructure:"client_secret_env"`
 	ReplayWindow    time.Duration `mapstructure:"replay_window"`
 	ResolvedSecret  string        `mapstructure:"-"`
@@ -132,7 +136,9 @@ type IntegrationConfig struct {
 
 type DestinationConfig struct {
 	Type             domain.DestinationType `mapstructure:"type"`
+	WebhookURL       string                 `mapstructure:"webhook_url"`
 	WebhookURLEnv    string                 `mapstructure:"webhook_url_env"`
+	BotToken         string                 `mapstructure:"bot_token"`
 	BotTokenEnv      string                 `mapstructure:"bot_token_env"`
 	ChatID           string                 `mapstructure:"chat_id"`
 	APIBaseURL       string                 `mapstructure:"api_base_url"`
@@ -200,25 +206,25 @@ func DefaultPath() string {
 }
 
 func (c *Config) resolveSecrets() error {
-	adminToken, key, err := resolveSecretValue(c.API.AdminTokenEnv)
+	adminToken, err := resolveConfiguredSecret(c.API.AdminToken, c.API.AdminTokenEnv)
 	if err != nil {
-		return fmt.Errorf("api admin token %q: %w", key, err)
+		return fmt.Errorf("api admin token: %w", err)
 	}
 	c.API.ResolvedAdminToken = adminToken
 
-	encryptionKey, key, err := resolveSecretValue(c.Database.EncryptionKeyEnv)
+	encryptionKey, err := resolveConfiguredSecret(c.Database.EncryptionKey, c.Database.EncryptionKeyEnv)
 	if err != nil {
-		return fmt.Errorf("database encryption key %q: %w", key, err)
+		return fmt.Errorf("database encryption key: %w", err)
 	}
 	c.Database.ResolvedEncryptionKey = encryptionKey
 
 	for id, integration := range c.Integrations {
-		value, key, err := resolveSecretValue(integration.SecretEnv)
-		if integration.Source == domain.SourceSentry && integration.ClientSecretEnv != "" {
-			value, key, err = resolveSecretValue(integration.ClientSecretEnv)
+		value, err := resolveConfiguredSecret(integration.Secret, integration.SecretEnv)
+		if integration.Source == domain.SourceSentry && (integration.ClientSecret != "" || integration.ClientSecretEnv != "") {
+			value, err = resolveConfiguredSecret(integration.ClientSecret, integration.ClientSecretEnv)
 		}
 		if err != nil {
-			return fmt.Errorf("integration %q secret env %q: %w", id, key, err)
+			return fmt.Errorf("integration %q secret: %w", id, err)
 		}
 		if value == "" {
 			continue
@@ -233,21 +239,21 @@ func (c *Config) resolveSecrets() error {
 	for id, destination := range c.Destinations {
 		switch destination.Type {
 		case domain.DestinationSlack, domain.DestinationTeams:
-			value, key, err := resolveSecretValue(destination.WebhookURLEnv)
+			value, err := resolveConfiguredSecret(destination.WebhookURL, destination.WebhookURLEnv)
 			if err != nil {
-				return fmt.Errorf("destination %q webhook env %q: %w", id, key, err)
+				return fmt.Errorf("destination %q webhook URL: %w", id, err)
 			}
 			if value == "" {
-				return fmt.Errorf("destination %q webhook env %q is empty", id, destination.WebhookURLEnv)
+				return fmt.Errorf("destination %q webhook URL is empty", id)
 			}
 			destination.ResolvedURL = value
 		case domain.DestinationTelegram:
-			value, key, err := resolveSecretValue(destination.BotTokenEnv)
+			value, err := resolveConfiguredSecret(destination.BotToken, destination.BotTokenEnv)
 			if err != nil {
-				return fmt.Errorf("destination %q bot token env %q: %w", id, key, err)
+				return fmt.Errorf("destination %q bot token: %w", id, err)
 			}
 			if value == "" {
-				return fmt.Errorf("destination %q bot token env %q is empty", id, destination.BotTokenEnv)
+				return fmt.Errorf("destination %q bot token is empty", id)
 			}
 			destination.ResolvedToken = value
 		}
@@ -260,6 +266,12 @@ func (c *Config) resolveSecrets() error {
 func (c Config) Validate() error {
 	var errs []error
 
+	if err := validateSecretChoice("api.admin_token", c.API.AdminToken, c.API.AdminTokenEnv); err != nil {
+		errs = append(errs, err)
+	}
+	if err := validateSecretChoice("database.encryption_key", c.Database.EncryptionKey, c.Database.EncryptionKeyEnv); err != nil {
+		errs = append(errs, err)
+	}
 	if strings.TrimSpace(c.Server.Address) == "" {
 		errs = append(errs, errors.New("server.address is required"))
 	}
@@ -269,8 +281,8 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.Database.Path) == "" {
 		errs = append(errs, errors.New("database.path is required"))
 	}
-	if strings.TrimSpace(c.Database.EncryptionKeyEnv) == "" {
-		errs = append(errs, errors.New("database.encryption_key_env is required"))
+	if strings.TrimSpace(c.Database.EncryptionKey) == "" && strings.TrimSpace(c.Database.EncryptionKeyEnv) == "" {
+		errs = append(errs, errors.New("database.encryption_key or database.encryption_key_env is required"))
 	}
 	if c.Workers.BatchSize <= 0 {
 		errs = append(errs, errors.New("workers.batch_size must be > 0"))
@@ -292,6 +304,12 @@ func (c Config) Validate() error {
 	}
 
 	for id, integration := range c.Integrations {
+		if err := validateSecretChoice(fmt.Sprintf("integration %q secret", id), integration.Secret, integration.SecretEnv); err != nil {
+			errs = append(errs, err)
+		}
+		if err := validateSecretChoice(fmt.Sprintf("integration %q client_secret", id), integration.ClientSecret, integration.ClientSecretEnv); err != nil {
+			errs = append(errs, err)
+		}
 		if !resourceIDPattern.MatchString(id) || strings.TrimSpace(id) != id {
 			errs = append(errs, fmt.Errorf("integration id %q must be a lowercase slug without surrounding whitespace", id))
 		}
@@ -304,17 +322,23 @@ func (c Config) Validate() error {
 	}
 
 	for id, destination := range c.Destinations {
+		if err := validateSecretChoice(fmt.Sprintf("destination %q webhook_url", id), destination.WebhookURL, destination.WebhookURLEnv); err != nil {
+			errs = append(errs, err)
+		}
+		if err := validateSecretChoice(fmt.Sprintf("destination %q bot_token", id), destination.BotToken, destination.BotTokenEnv); err != nil {
+			errs = append(errs, err)
+		}
 		if !resourceIDPattern.MatchString(id) || strings.TrimSpace(id) != id {
 			errs = append(errs, fmt.Errorf("destination id %q must be a lowercase slug without surrounding whitespace", id))
 		}
 		switch destination.Type {
 		case domain.DestinationSlack, domain.DestinationTeams:
-			if strings.TrimSpace(destination.WebhookURLEnv) == "" {
-				errs = append(errs, fmt.Errorf("destination %q webhook_url_env is required", id))
+			if strings.TrimSpace(destination.WebhookURL) == "" && strings.TrimSpace(destination.WebhookURLEnv) == "" {
+				errs = append(errs, fmt.Errorf("destination %q webhook_url or webhook_url_env is required", id))
 			}
 		case domain.DestinationTelegram:
-			if strings.TrimSpace(destination.BotTokenEnv) == "" {
-				errs = append(errs, fmt.Errorf("destination %q bot_token_env is required", id))
+			if strings.TrimSpace(destination.BotToken) == "" && strings.TrimSpace(destination.BotTokenEnv) == "" {
+				errs = append(errs, fmt.Errorf("destination %q bot_token or bot_token_env is required", id))
 			}
 			if strings.TrimSpace(destination.ChatID) == "" {
 				errs = append(errs, fmt.Errorf("destination %q chat_id is required", id))
@@ -572,6 +596,26 @@ func resolveSecretValue(ref string) (string, string, error) {
 	}
 
 	return value, ref, nil
+}
+
+func resolveConfiguredSecret(inline, envRef string) (string, error) {
+	inline = strings.TrimSpace(inline)
+	envRef = strings.TrimSpace(envRef)
+	if inline != "" && envRef != "" {
+		return "", errors.New("inline value and environment reference are mutually exclusive")
+	}
+	if inline != "" {
+		return inline, nil
+	}
+	value, _, err := resolveSecretValue(envRef)
+	return value, err
+}
+
+func validateSecretChoice(label, inline, envRef string) error {
+	if strings.TrimSpace(inline) != "" && strings.TrimSpace(envRef) != "" {
+		return fmt.Errorf("%s inline value and environment reference are mutually exclusive", label)
+	}
+	return nil
 }
 
 func IsTelegramChatID(value string) bool {

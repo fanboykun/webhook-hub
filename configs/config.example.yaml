@@ -9,9 +9,8 @@ server:
   trusted_proxies: []
 
 api:
-  # Committed example uses an environment-variable reference.
-  # Example actual env value: export GATEWAY_ADMIN_TOKEN="$(make gen-token)"
-  admin_token_env: GATEWAY_ADMIN_TOKEN
+  # Local config.yaml is secret-bearing and ignored by Git. Replace this value.
+  admin_token: replace-with-output-of-make-gen-token
   docs_enabled: true
 
 logging:
@@ -21,9 +20,8 @@ logging:
 
 database:
   path: ./data/gateway.db
-  # Committed example uses an environment-variable reference.
-  # Example actual env value: export GATEWAY_ENCRYPTION_KEY="$(make gen-encryption-key)"
-  encryption_key_env: GATEWAY_ENCRYPTION_KEY
+  # Replace this with the 64-character hex output of make gen-encryption-key.
+  encryption_key: replace-with-output-of-make-gen-encryption-key
   busy_timeout: 5s
   max_open_connections: 1
   retain_raw_payloads: true
@@ -44,24 +42,24 @@ retry:
 integrations:
   watcher-production:
     source: watcher
-    secret_env: WATCHER_WEBHOOK_SECRET
+    secret: whsec_replace-me
     replay_window: 5m
 
   github-main:
     source: github
-    secret_env: GITHUB_WEBHOOK_SECRET
+    secret: replace-with-github-webhook-secret
 
 destinations:
   slack-deployments:
     type: slack
-    webhook_url_env: SLACK_DEPLOYMENTS_WEBHOOK_URL
+    webhook_url: https://example.invalid/replace-with-slack-webhook
     renderer_profiles:
       - watcher-deployment-failed-detailed
       - github-workflow-failed-detailed
 
   telegram-bot:
     type: telegram
-    bot_token_env: TELEGRAM_ONCALL_BOT_TOKEN
+    bot_token: replace-with-telegram-bot-token
     chat_id: "-100123456789"
     renderer_profiles:
       - watcher-deployment-failed-compact
@@ -69,7 +67,7 @@ destinations:
 
   teams-oncall:
     type: teams
-    webhook_url_env: TEAMS_ONCALL_WEBHOOK_URL
+    webhook_url: https://example.invalid/replace-with-teams-webhook
     renderer_profiles:
       - watcher-deployment-failed-detailed
       - github-workflow-failed-detailed

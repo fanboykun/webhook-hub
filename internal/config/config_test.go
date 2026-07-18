@@ -116,17 +116,18 @@ func TestDefaultPathReturnsLocalNameWhenNoConfigExists(t *testing.T) {
 }
 
 func TestLoadExampleConfig(t *testing.T) {
-	t.Setenv("GATEWAY_ADMIN_TOKEN", "admin-token")
-	t.Setenv(testEncryptionKeyEnv, testEncryptionKeyValue)
-	t.Setenv("WATCHER_WEBHOOK_SECRET", "whsec_c2VjcmV0")
-	t.Setenv("GITHUB_WEBHOOK_SECRET", "github-secret")
-	t.Setenv("SLACK_DEPLOYMENTS_WEBHOOK_URL", "https://example.invalid/slack")
-	t.Setenv("TELEGRAM_ONCALL_BOT_TOKEN", "telegram-token")
-	t.Setenv("TEAMS_ONCALL_WEBHOOK_URL", "https://example.invalid/teams")
-
 	cfg, err := Load(filepath.Join("..", "..", "configs", "config.example.yaml"))
 	if err != nil {
 		t.Fatalf("load example config: %v", err)
+	}
+	if cfg.API.ResolvedAdminToken == "" || cfg.Database.ResolvedEncryptionKey == "" {
+		t.Fatal("expected inline process secrets to be resolved")
+	}
+	if cfg.Integrations["watcher-production"].ResolvedSecret == "" {
+		t.Fatal("expected inline integration secret to be resolved")
+	}
+	if cfg.Destinations["slack-deployments"].ResolvedURL == "" || cfg.Destinations["telegram-bot"].ResolvedToken == "" {
+		t.Fatal("expected inline destination secrets to be resolved")
 	}
 	if got := cfg.Destinations["slack-deployments"].RendererProfiles; len(got) != 2 {
 		t.Fatalf("expected two event-specific Slack profiles, got %+v", got)
@@ -183,11 +184,65 @@ func TestResolveSecretsAcceptsWatcherWhsecPrefix(t *testing.T) {
 	}
 }
 
-func TestResolveSecretValueRejectsInlineSecrets(t *testing.T) {
+func TestResolveEnvSecretRejectsInvalidReference(t *testing.T) {
 	for _, value := range []string{"https://hooks.example.invalid/secret", "whsec_inline", "123456:token"} {
 		if _, _, err := resolveSecretValue(value); err == nil || !strings.Contains(err.Error(), "environment variable name") {
 			t.Fatalf("resolveSecretValue(%q) error = %v, want env reference error", value, err)
 		}
+	}
+}
+
+func TestResolveConfiguredSecret(t *testing.T) {
+	t.Setenv("TEST_INLINE_SECRET_OVERRIDE", "from-env")
+
+	tests := []struct {
+		name    string
+		inline  string
+		envRef  string
+		want    string
+		wantErr string
+	}{
+		{name: "inline", inline: "inline-value", want: "inline-value"},
+		{name: "environment", envRef: "TEST_INLINE_SECRET_OVERRIDE", want: "from-env"},
+		{name: "empty optional value"},
+		{name: "both forms", inline: "inline-value", envRef: "TEST_INLINE_SECRET_OVERRIDE", wantErr: "mutually exclusive"},
+		{name: "missing environment", envRef: "MISSING_INLINE_SECRET_OVERRIDE", wantErr: "empty"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveConfiguredSecret(tc.inline, tc.envRef)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("resolveConfiguredSecret() error = %v, want substring %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveConfiguredSecret() error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("resolveConfiguredSecret() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsInlineAndEnvironmentSecretTogether(t *testing.T) {
+	cfg := Config{
+		Server: ServerConfig{Address: ":8080", MaxWebhookBodyBytes: 1},
+		Database: DatabaseConfig{
+			Path:             "gateway.db",
+			EncryptionKey:    testEncryptionKeyValue,
+			EncryptionKeyEnv: testEncryptionKeyEnv,
+		},
+		Workers: testWorkersConfig(),
+		Retry:   RetryConfig{MaxAttempts: 1},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("Validate() error = %v, want mutually exclusive error", err)
 	}
 }
 

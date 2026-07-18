@@ -427,7 +427,7 @@ Acceptance criteria (met):
 - [x] Webhook integrations and delivery destinations can be created, retrieved, updated, and deleted dynamically via the operational API.
 - [x] Sensitive fields are stored encrypted in SQLite using AES-256-GCM.
 - [x] Sensitive fields are redacted as `"[REDACTED]"` in all retrieval API responses.
-- [x] `database.encryption_key_env` points to a present and valid master key (32 decoded bytes as hex or base64).
+- [x] `database.encryption_key` or `database.encryption_key_env` resolves to a valid master key (32 decoded bytes as hex or base64).
 
 Residual: persisted writes can still succeed while a later in-memory publication fails, which is surfaced as `ErrRuntimeReloadRequired`; publication itself validates a complete snapshot first and dynamic config plus route writes are serialized.
 

@@ -22,5 +22,5 @@ Migration `009_reset_unshipped_renderer_contract.sql` deletes existing receipts,
 
 - Invalid source payloads fail before any receipt or event is persisted.
 - Invalid templates or dynamic references never replace a valid live registry snapshot.
-- Operators must configure secret fields with environment variable names, not inline secret values.
+- Root runtime config is ignored and may contain inline secret values; deployments may select explicit environment-backed forms instead.
 - Existing development databases lose notification history, destinations, renderer profiles, and routes once migration 009 runs; configured defaults repopulate empty tables on the next startup.

@@ -200,10 +200,9 @@ func MapIntegrations(items []domain.ManagedIntegration) map[string]config.Integr
 	out := make(map[string]config.IntegrationConfig, len(items))
 	for _, item := range items {
 		out[item.ID] = config.IntegrationConfig{
-			Source:          item.Source,
-			ResolvedSecret:  item.Secret,
-			ClientSecretEnv: item.ClientSecret,
-			ReplayWindow:    item.ReplayWindow,
+			Source:         item.Source,
+			ResolvedSecret: item.Secret,
+			ReplayWindow:   item.ReplayWindow,
 		}
 	}
 	return out

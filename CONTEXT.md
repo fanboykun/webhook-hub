@@ -55,9 +55,9 @@ The package architecture follows a strict layout designed to isolate ingestion, 
 
 ---
 
-## 3. Working Tree Status (Branch `main`)
+## 3. Working Tree Status (Branch `feat/renderer`)
 
-The working tree contains the production-hardening correction for the **Phase 7 (PRD #9)** renderer and event contracts:
+Commit `b93022e` contains the production-hardening correction for the **Phase 7 (PRD #9)** renderer and event contracts and is one commit ahead of `origin/main`. The branch matched `origin/feat/renderer` with no local changes at the start of the 2026-07-18 audit; this mandatory context refresh is the only subsequent working-tree edit.
 *   **Compilation & Tests:** The codebase compiles and the complete race suite passes (`go test -race ./...`).
 *   **Formatting:** All files are formatted according to standard Go styling guidelines.
 *   **SQLite Migrations:** Fully versioned migrations (`001_initial.sql` to `009_reset_unshipped_renderer_contract.sql`) are applied on startup. Migration 009 intentionally clears unshipped notification, route, destination, and renderer-profile data so the incompatible old profile shape cannot survive an upgrade; configured defaults repopulate the empty dynamic tables during the same startup.
@@ -67,8 +67,11 @@ The working tree contains the production-hardening correction for the **Phase 7 
 *   **Event Contracts:** Watcher definitions are event-specific. Ingress enforces payload version, required paths, JSON types, unknown-field rejection, and absolute HTTP(S) source links before persistence; optional fields are materialized deterministically for rendering.
 *   **Renderer Profiles:** Issues #13 and #16 remain open as requested, but the local implementation now uses destination profile lists with one uniquely named profile per source/event. Profiles compile once through `internal/renderprofile`, reject dynamic template bypasses, escape provider-controlled values, and enforce provider output limits. ADR-0011 and ADR-0012 record the model.
 *   **Dynamic Safety:** Typed integration, destination, renderer-profile, and route defaults seed their corresponding empty SQLite tables in one startup transaction. Non-empty tables remain operator-owned. Bootstrap validates and publishes all persisted registries plus routes before HTTP or workers start; invalid persisted routes leave the previous routing snapshot untouched. CRUD writes are serialized; referenced profiles and destinations return `409`; active deliveries prevent destination deletion; historical deliveries cannot be retried after destination removal. ADR-0013 records this contract.
+*   **Local Secrets:** Root `config.yaml` is ignored and treated like `.env`; agents must never read or edit it. Inline `admin_token`, `encryption_key`, integration secrets, and destination credentials are the local default. Explicit `*_env` alternatives remain available for deployments and are mutually exclusive with inline values. ADR-0014 records this contract.
+*   **Encryption Key:** `database.encryption_key` (or its deployment-only `encryption_key_env` alternative) must resolve to a stable random 32-byte key encoded as 64 hexadecimal characters or standard base64. Generate it with `make gen-encryption-key`; changing or losing it makes existing encrypted dynamic integration and destination configuration unreadable.
 *   **Worker Concurrency:** `workers.concurrency` starts the configured number of independently leased schedulers, with one separate lease-recovery loop.
-*   **Current Verification:** On 2026-07-16, `go test -race ./...`, `go vet ./...`, `git diff --check`, and the Windows amd64 version-stamped build passed. The Windows build emitted only the known read-only Go module stat-cache warning.
+*   **Branch Audit:** Issues #13 and #16 remain open and no pull request exists for `feat/renderer`. The branch implementation satisfies their corrected renderer-profile direction, but migration 009 removal and stale `docs/tasks.md` statements should be cleaned up before opening the PR.
+*   **Current Verification:** On 2026-07-18, inline and environment-backed secret loading tests, `go test -race ./...`, `go vet ./...`, `git diff --check`, and the Windows amd64 version-stamped build passed.
 
 ---
 

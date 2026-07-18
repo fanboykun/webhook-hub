@@ -109,9 +109,9 @@ The gateway returns `202 Accepted` only after the receipt, normalized events, an
 
 Database transactions must remain short. Slack, Telegram, SMTP, DNS, and any other network operation happen only after a transaction is committed.
 
-### 5.6 Configuration references secrets
+### 5.6 Local configuration owns secrets
 
-Configuration contains environment-variable references, not plaintext tokens, webhook URLs, SMTP passwords, or signing secrets.
+Root `config.yaml` is ignored by Git and treated as a secret-bearing runtime file equivalent to `.env`. Inline secret fields are the local default. Corresponding `*_env` fields remain available for deployments, but an inline value and environment reference cannot both be configured for the same secret.
 
 ### 5.7 One process, replaceable boundaries
 
@@ -297,7 +297,7 @@ POST /api/v1/test-deliveries
 GET  /api/v1/status
 ```
 
-The operational API must be protected independently from source webhook authentication. Version 1 may use a static bearer token referenced through an environment variable and constant-time comparison. It should be placed behind a private network or authenticated reverse proxy when possible.
+The operational API must be protected independently from source webhook authentication. Version 1 may use a static bearer token loaded inline from the ignored runtime config or through an environment reference and compared in constant time. It should be placed behind a private network or authenticated reverse proxy when possible.
 
 ### Suggested filters
 
@@ -465,8 +465,9 @@ Verify the Sentry signature against the original raw body with the configured in
 
 ### 10.6 Secret handling
 
-- Secrets are referenced by environment variable name.
-- Missing referenced secrets fail startup.
+- Local secrets may be stored inline in ignored root `config.yaml`; deployments may use explicit environment references instead.
+- Inline and environment-backed forms are mutually exclusive for each secret.
+- Missing inline values or referenced environment variables fail startup.
 - Secret values are never returned by the status API.
 - Secret values are never included in logs or GORM query arguments.
 - Slack webhook URLs and Telegram bot tokens are secrets.
@@ -996,7 +997,7 @@ Destination configuration is decoded into provider-specific typed configuration 
 ```yaml
 slack-deployments:
   type: slack
-  webhook_url_env: SLACK_DEPLOYMENTS_WEBHOOK_URL
+  webhook_url: https://example.invalid/replace-with-slack-webhook
   renderer_profiles:
     - watcher-deployment-failed-detailed
     - github-workflow-failed-detailed
@@ -1009,7 +1010,7 @@ An incoming webhook URL is channel-specific. Create separate named destinations 
 ```yaml
 telegram-bot:
   type: telegram
-  bot_token_env: TELEGRAM_ONCALL_BOT_TOKEN
+  bot_token: replace-with-telegram-bot-token
   chat_id: "-100123456789"
   renderer_profiles:
     - watcher-deployment-failed-compact
@@ -1021,7 +1022,7 @@ telegram-bot:
 ```yaml
 teams-oncall:
   type: teams
-  webhook_url_env: TEAMS_ONCALL_WEBHOOK_URL
+  webhook_url: https://example.invalid/replace-with-teams-webhook
   renderer_profiles:
     - watcher-deployment-failed-detailed
     - github-workflow-failed-detailed
@@ -1447,7 +1448,7 @@ server:
   trusted_proxies: []
 
 api:
-  admin_token_env: GATEWAY_ADMIN_TOKEN
+  admin_token: replace-with-output-of-make-gen-token
   docs_enabled: true
 
 logging:
@@ -1457,6 +1458,7 @@ logging:
 
 database:
   path: ./data/gateway.db
+  encryption_key: replace-with-output-of-make-gen-encryption-key
   busy_timeout: 5s
   max_open_connections: 1
   retain_raw_payloads: true
@@ -1480,23 +1482,23 @@ retry:
 integrations:
   watcher-production:
     source: watcher
-    secret_env: WATCHER_WEBHOOK_SECRET
+    secret: whsec_replace-me
     replay_window: 5m
 
   github-main:
     source: github
-    secret_env: GITHUB_WEBHOOK_SECRET
+    secret: replace-with-github-webhook-secret
 
   grafana-production:
     source: grafana
-    secret_env: GRAFANA_WEBHOOK_SECRET
+    secret: replace-with-grafana-webhook-secret
     signature_header: X-Grafana-Alerting-Signature
     timestamp_header: X-Grafana-Alerting-Timestamp
     replay_window: 5m
 
   sentry-frontend:
     source: sentry
-    client_secret_env: SENTRY_INTEGRATION_CLIENT_SECRET
+    client_secret: replace-with-sentry-integration-client-secret
 
 smtp:
   primary:
@@ -1512,21 +1514,21 @@ smtp:
 destinations:
   slack-operations:
     type: slack
-    webhook_url_env: SLACK_OPERATIONS_WEBHOOK_URL
+    webhook_url: https://example.invalid/replace-with-slack-operations-webhook
     renderer_profiles:
       - watcher-deployment-failed-detailed
       - github-workflow-failed-detailed
 
   slack-deployments:
     type: slack
-    webhook_url_env: SLACK_DEPLOYMENTS_WEBHOOK_URL
+    webhook_url: https://example.invalid/replace-with-slack-deployments-webhook
     renderer_profiles:
       - watcher-deployment-failed-detailed
       - github-workflow-failed-detailed
 
   telegram-bot:
     type: telegram
-    bot_token_env: TELEGRAM_ONCALL_BOT_TOKEN
+    bot_token: replace-with-telegram-bot-token
     chat_id: "-100123456789"
     renderer_profiles:
       - watcher-deployment-failed-compact
@@ -1549,7 +1551,8 @@ Startup must fail when:
 
 - Integration IDs are duplicated.
 - Destination IDs are duplicated.
-- A required secret environment variable is absent.
+- A required inline secret or referenced environment variable is absent.
+- Both inline and environment-backed forms are configured for one secret.
 - A source or destination type is unsupported.
 - A replay window is invalid.
 - An SMTP reference is unknown.
@@ -1557,7 +1560,7 @@ Startup must fail when:
 - Worker, retry, or timeout values are out of bounds.
 - SQLite path is empty or its parent directory cannot be created.
 
-Viper is an input mechanism. After loading, unmarshal into typed configuration structs, resolve secret references, validate, and pass an immutable config object to the application. Startup route defaults and API-managed routes use the same source, event, severity, environment, and destination-reference rules. Persisted routes are validated again as a complete snapshot before the routing engine is replaced.
+Viper is an input mechanism. After loading, unmarshal into typed configuration structs, resolve inline or environment-backed secrets, validate, and pass an immutable config object to the application. Startup route defaults and API-managed routes use the same source, event, severity, environment, and destination-reference rules. Persisted routes are validated again as a complete snapshot before the routing engine is replaced.
 
 ---
 
@@ -2181,7 +2184,7 @@ Acceptance criteria:
 - [ ] Replay timestamps checked where supported.
 - [ ] Webhook body-size limit enabled.
 - [ ] Admin API protected.
-- [ ] Secrets referenced through environment variables.
+- [ ] Root runtime config is ignored, permission-restricted, and never logged; deployment environment references are validated when used.
 - [ ] Secrets and signatures redacted from logs.
 - [ ] Outbound URLs come only from validated configuration.
 - [ ] Redirect following disabled or restricted for provider clients.

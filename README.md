@@ -125,17 +125,19 @@ The detailed design, ADRs, API behavior, persistence model, and package directio
 
 ## Configuration Principles
 
-- Configuration references secret environment variables; it does not embed secret values.
+- Root `config.yaml` is an ignored, secret-bearing runtime file and must be protected like `.env`.
+- Inline secret fields are the local default; corresponding `*_env` fields remain available for deployments and are mutually exclusive with inline values.
 - Startup fails if required secrets, destinations, or integrations are invalid.
-- `database.encryption_key_env` points at the master encryption key env var used to protect dynamic integrations/destinations secrets in SQLite.
+- `database.encryption_key` contains the master key used to protect dynamic integrations/destinations secrets in SQLite; `database.encryption_key_env` is the optional environment-backed form.
 - SQLite runs with WAL, foreign keys enabled, a busy timeout, and short write transactions.
 - A versioned migration system is required; `AutoMigrate` is not the production schema strategy.
 
-## Environment Variables
+## Secrets
 
-- `GATEWAY_ENCRYPTION_KEY`: the default env var referenced by `database.encryption_key_env`. It must decode to 32 bytes as hex or base64. Generate one with `make gen-encryption-key`.
-- `GATEWAY_ADMIN_TOKEN`: referenced by `api.admin_token_env` in config and used for operational API auth.
-- Provider secret env vars are referenced from config, for example `WATCHER_WEBHOOK_SECRET`, `GITHUB_WEBHOOK_SECRET`, `SLACK_DEPLOYMENTS_WEBHOOK_URL`, and `TELEGRAM_ONCALL_BOT_TOKEN`.
+- Generate `database.encryption_key` with `make gen-encryption-key`; it must decode to 32 bytes as hex or base64.
+- Generate `api.admin_token` with `make gen-token`.
+- Integrations use `secret` or `client_secret`; destinations use `webhook_url` or `bot_token`.
+- Deployments may use the corresponding `*_env` fields instead, such as `encryption_key_env`, `admin_token_env`, `secret_env`, `webhook_url_env`, or `bot_token_env`.
 
 ## Operational Constraints
 
